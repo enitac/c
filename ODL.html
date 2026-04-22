@@ -2083,7 +2083,7 @@ async function commitFile(path, message, content, sha, method) {
             return await res.json();
         } else {
             // LOCAL MODE: direct GitHub API call
-            const GH_REPO = 'c';
+            const GH_REPO = 'c1';
             const GH_USER = 'enitac';
             const url = `https://api.github.com/repos/${GH_USER}/${GH_REPO}/contents/${path}`;
             const body = { message, branch: 'main' };
