@@ -817,7 +817,7 @@ function saveSelectedSubjectsToRepo() {
 
 <div id="initialPage" class="page">
     <img src="https://raw.githubusercontent.com/chimteka/c/main/logo.png" alt="Chimteka Secondary School Logo" class="logo">
-    <h1><p style="font-size:28px;">CHIMTEKA SECONDARY</p></h1>
+    <h1><p style="font-size:28px;">CHIMTEKA SECONDARY SCHOOL</p></h1>
     <h2>EXAM PORTAL</h2>
     <label for="selectedForm">Select Form / Sankhani Kalasi</label>
     <select id="selectedForm">
@@ -895,7 +895,7 @@ function saveSelectedSubjectsToRepo() {
     <button class="back-btn" onclick="handleProgressBack()" style="position: absolute; top: 10px; left: 10px; width: auto; padding: 5px 10px; max-width: none !important; margin: 0;">Back</button>
 
     <header id="reportHeader" style="width: 100%;">
-        <img src="https://raw.githubusercontent.com/magawass/m/main/logo.png" class="logo" alt="School Logo">
+        <img src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt="School Logo">
         <div id="reportHeaderRight">
             <h3>CHIMTEKA COMMUNITY SECONDARY SCHOOL</h3>
             Private Bag ,<br>
@@ -1087,7 +1087,7 @@ function saveSelectedSubjectsToRepo() {
     </select>
 
     <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-        <button onclick="exportToExcel('scoresTable', 'Magawa_Secondary_Mark_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
+        <button onclick="exportToExcel('scoresTable', 'Chimteka_Secondary_Mark_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
         <button onclick="printSheet('scoreSheetView')" class="small-btn" style="max-width: 150px; margin: 5px;">Print Sheet</button>
     </div>
 
@@ -1387,7 +1387,7 @@ function saveSelectedSubjectsToRepo() {
     </select>
 
     <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-        <button onclick="exportToExcel('gradesTable', 'Magawa_Secondary_Grade_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
+        <button onclick="exportToExcel('gradesTable', 'Chimteka_Secondary_Grade_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
         <button onclick="printSheet('gradesPage')" class="small-btn" style="max-width: 150px; margin: 5px;">Print Sheet</button>
     </div>
 
@@ -1418,7 +1418,7 @@ function saveSelectedSubjectsToRepo() {
         <p style="margin:2px 0; font-size:0.95em;"><strong>Analysis Sheet</strong> | Class: <span id="analysisSheetClassLabel">--</span> | Term: <span id="analysisSheetTermLabel">--</span> | Year: <span id="analysisSheetYearLabel">--</span></p>
     </div>
     <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-        <button onclick="exportToExcel('analysisTable', 'Magawa_Secondary_Analysis_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
+        <button onclick="exportToExcel('analysisTable', 'Chimteka_Secondary_Analysis_Sheet')" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
         <button onclick="printSheet('analysisPage')" class="small-btn" style="max-width: 150px; margin: 5px;">Print Analysis (Landscape)</button>
     </div>
     <div id="analysisTableWrapper" class="table-wrapper"> </div>
@@ -1449,7 +1449,7 @@ function getScoreFilePath(form, subject) {
 async function getScoreFileSha(form, subject) {
     var path = getScoreFilePath(form, subject);
     try {
-        var res = await ghFetch('https://api.github.com/repos/magawass/m1/contents/' + path);
+        var res = await ghFetch('https://api.github.com/repos/enitac/c1/contents/' + path);
         if (res.ok) { var data = await res.json(); return data.sha; }
         if (res.status === 404) return null;
         throw new Error('Failed to get SHA: ' + res.statusText);
@@ -1469,7 +1469,7 @@ async function fetchScoreOverlay(form) {
         try {
             var path = getScoreFilePath(form, subject);
             var csv;
-            var res = await fetch('https://raw.githubusercontent.com/magawass/m/main/' + path);
+            var res = await fetch('https://raw.githubusercontent.com/enitac/c/main/' + path);
             if (!res.ok) return; // File doesn't exist yet — no scores saved for this subject
 
             csv = await res.text();
@@ -3775,7 +3775,7 @@ async function refreshSubjectMonitor(form) {
                 const resData = await res.json();
                 parsed = Papa.parse(resData.content, { header: true, skipEmptyLines: true });
             } else {
-                const res = await fetch(`https://raw.githubusercontent.com/magawass/m/main/${form}.csv`);
+                const res = await fetch(`https://raw.githubusercontent.com/enitac/c/main/${form}.csv`);
                 if (!res.ok) throw new Error("File not found");
                 const csv = await res.text();
                 parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
