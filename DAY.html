@@ -19,7 +19,7 @@
 // The admin password is used as the decryption key via PBKDF2 (310k iterations).
 // Token only exists in memory after successful login and is cleared on logout.
 // NO token is ever visible in page source, localStorage, cookies, or DevTools.
-const ENCRYPTED_TOKEN_DATA = 'eyJzIjoiYzFpZzd0S3FqY2t6ZGpzOUFIejdudz09IiwiaXYiOiIydlRzYnEra3FENU1OVll3IiwiY3QiOiJ1STV0YU5KbysvNmVlc2JYMEtJZUdJZFBaU3NSYWc1ay9NejFGd1BYUDZFRjhNbSt1Z1dBc2lTYTNIeEdyb2Q5NlZBTzl5WnVjVmxtUzhoa3FEd29NSWJ5R0JwN3Bmc0ExUExuQk1GZllCa1pUdGY0MUsyb0daN2NEcmNqbXBwMGYzd0Z0NWVkdXQ2S2VVWGhqQT09In0=';
+const ENCRYPTED_TOKEN_DATA = 'eyJzIjoiNlI2S1FYejBidWdOMmMzQU9SS3llQT09IiwiaXYiOiJrNGdTRnhKV09PNWZuWEpoIiwiY3QiOiJwSER2SWVCeU43aU0xSUptT25mZzk2ZXVNck5DcjFFTy80L1M3bXRrMkxVOG9SVS9GczJZSHBaL3VQZi9MSXdGR3NOSzVZaWZSN1d3dDMyaTFaRzBLNUFKZ1owelJkRXZLb3Fxdlp1c1BMMkRoNDE2V1AyRm1VVXNQcUVGY3pXcHRKdVMwL0crOUhyRFJYTEVkQT09In0=';
 let _adminAuthenticated = false;
 let _storedPassword = null;
 let _useProxy = false; // Always direct GitHub API (no Vercel proxy needed)
