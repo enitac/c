@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Chimteka Secondary Portal</title>
+  <title>Chimteka Community Day Secondary Portal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -10,8 +10,229 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
-// --- SURGICAL FIX: Disable all alert() popups globally ---
-window.alert = function() {};
+// --- Custom notification system (replaces silent alert suppression) ---
+window._realAlert = window.alert;
+window.alert = function(msg) {
+    console.warn('[ALERT]', msg);
+    // Show a visible toast notification instead of silently swallowing
+    try {
+        let toast = document.getElementById('_globalToast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = '_globalToast';
+            toast.style.cssText = 'position:fixed;top:20px;right:20px;max-width:420px;padding:14px 22px;background:#c0392b;color:#fff;border-radius:8px;z-index:999999;font-family:Segoe UI,sans-serif;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;cursor:pointer;word-wrap:break-word;';
+            toast.onclick = function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); };
+            document.body.appendChild(toast);
+        }
+        toast.textContent = msg;
+        toast.style.opacity = '1';
+        clearTimeout(toast._timer);
+        toast._timer = setTimeout(function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); }, 6000);
+    } catch(e) {
+        // Last resort fallback
+    }
+};
+
+// ============================================================
+// AES-256-GCM TOKEN ENCRYPTION SYSTEM
+// Encrypted token is stored on GitHub as a file, fetched on login,
+// decrypted in memory, and erased on logout.
+// ============================================================
+
+const TOKEN_FILE = '.token'; // File name on GitHub storing the encrypted token
+
+// In-memory ONLY — never persisted to disk or localStorage
+let _decryptedGitHubToken = null;
+let _isLoggedIn = false; // Tracks active session state
+let _sessionEncryptedToken = null; // Cached during session so we don't re-fetch from GitHub every time
+let _setupDoneOnce = false; // Set true after first successful setup or login — survives logout, never reset
+
+// Central token access — every function that needs the GitHub token calls this
+function getDecryptedToken() {
+    if (!_isLoggedIn) return null;
+    return _decryptedGitHubToken;
+}
+
+// ============================================================
+// TOKEN INJECTION: Login fetches from GitHub, decrypts, injects.
+// Logout erases from all sections.
+// ============================================================
+
+// Fetch the encrypted token blob from GitHub
+async function fetchEncryptedTokenFromGitHub() {
+    // Try the authenticated Contents API first (works for private repos)
+    const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${TOKEN_FILE}`;
+    try {
+        const response = await fetch(apiUrl, {
+            headers: { 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (response.ok) {
+            const data = await response.json();
+            // FIX: GitHub API wraps base64 with newlines — strip them before decoding
+            return { encrypted: atob(data.content.replace(/\n/g, '')), sha: data.sha };
+        }
+    } catch (e) {
+        console.warn('API fetch for token failed, trying raw URL:', e);
+    }
+    // Fallback: raw URL (works for public repos)
+    try {
+        const rawUrl = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${TOKEN_FILE}`;
+        const response = await fetch(rawUrl);
+        if (response.ok) {
+            const encrypted = await response.text();
+            return { encrypted: encrypted.trim(), sha: null };
+        }
+    } catch (e) {
+        console.warn('Raw fetch for token failed:', e);
+    }
+    return null;
+}
+
+// Push encrypted token to GitHub repo
+async function pushEncryptedTokenToGitHub(encryptedBase64) {
+    // First check if .token file already exists (to get SHA for update)
+    let sha = null;
+    try {
+        const checkUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${TOKEN_FILE}`;
+        const checkResp = await fetch(checkUrl, {
+            headers: { 'Authorization': `Bearer ${_decryptedGitHubToken}`, 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (checkResp.ok) {
+            const existingData = await checkResp.json();
+            sha = existingData.sha;
+        }
+    } catch (e) {
+        // File doesn't exist yet — will create new
+    }
+    
+    const base64Content = btoa(unescape(encodeURIComponent(encryptedBase64)));
+    const body = {
+        message: 'Update encrypted token',
+        content: base64Content,
+        branch: 'main'
+    };
+    if (sha) body.sha = sha;
+    
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${TOKEN_FILE}`, {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${_decryptedGitHubToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+    
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(`Failed to save token to GitHub: ${response.status} - ${err.message || ''}`);
+    }
+    return await response.json();
+}
+
+// INJECT TOKEN: After successful login, token is available via getDecryptedToken()
+// All GitHub API calls already use getDecryptedToken() — no individual section updates needed.
+
+// ERASE TOKEN: Wipe everything on logout
+function eraseTokenAndSession() {
+    _decryptedGitHubToken = null;
+    _isLoggedIn = false;
+    _sessionEncryptedToken = null;
+    currentConfig = null;
+    configSha = null;
+    currentClassData = {};
+    currentDataSha = {};
+    initializeConfig(null);
+}
+
+// Derive AES-256-GCM key from password using PBKDF2
+async function deriveKey(password, salt) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        enc.encode(password),
+        'PBKDF2',
+        false,
+        ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: salt,
+            iterations: 600000,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+// Encrypt a token with a password → base64 string (salt + iv + ciphertext)
+async function encryptToken(plainToken, password) {
+    const enc = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(password, salt);
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        enc.encode(plainToken)
+    );
+    // Concatenate: salt(16) + iv(12) + ciphertext
+    const combined = new Uint8Array(salt.length + iv.length + ciphertext.byteLength);
+    combined.set(salt, 0);
+    combined.set(iv, salt.length);
+    combined.set(new Uint8Array(ciphertext), salt.length + iv.length);
+    // Return base64
+    return btoa(String.fromCharCode.apply(null, combined));
+}
+
+// Decrypt base64 string → original token using password
+async function decryptToken(encryptedBase64, password) {
+    const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+    const salt = combined.slice(0, 16);
+    const iv = combined.slice(16, 28);
+    const ciphertext = combined.slice(28);
+    const key = await deriveKey(password, salt);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        ciphertext
+    );
+    return new TextDecoder().decode(decrypted);
+}
+
+// Check if encrypted token exists on GitHub
+async function checkTokenExists() {
+    try {
+        const apiUrl = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${TOKEN_FILE}`;
+        const response = await fetch(apiUrl, {
+            headers: { 'Accept': 'application/vnd.github.v3+json' }
+        });
+        return response.ok;
+    } catch (e) {
+        // Fallback: try raw URL
+        try {
+            const rawUrl = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${TOKEN_FILE}`;
+            const response = await fetch(rawUrl);
+            return response.ok;
+        } catch (e2) {
+            return false;
+        }
+    }
+}
+
+// Synchronous check (returns true if previously confirmed, will be rechecked on login)
+let _tokenExistsOnGitHub = null;
+function isTokenSetup() {
+    // Cannot know for sure until we check GitHub — return optimistic default
+    // verifyAdmin() will do the actual check
+    return true;
+}
+
+// ============================================================
 
 // --- FRONT PAGE POPUP (only for initialPage, other pages unaffected) ---
 function showFrontPagePopup(msg) {
@@ -144,6 +365,77 @@ function updatePasswordAccessStatus() {
     }
 }
 
+// === SURGICAL FIX: Popup-based subject hide/unhide with checkboxes ===
+function openHideSubjectPopup() {
+    var classSelect = document.getElementById('lockClassSelect');
+    var selectedClass = classSelect ? classSelect.value : '';
+    if (!selectedClass) {
+        alert('Please select a Class first.');
+        return;
+    }
+    var overlay = document.getElementById('subjectHidePopupOverlay');
+    var classLabel = document.getElementById('subjectHidePopupClass');
+    var listEl = document.getElementById('subjectHideCheckboxList');
+    classLabel.textContent = 'Class: ' + selectedClass.toUpperCase().replace('FORM', 'Form ');
+    listEl.innerHTML = '';
+    if (!currentConfig.locks) currentConfig.locks = {};
+    if (!currentConfig.locks[selectedClass]) currentConfig.locks[selectedClass] = {};
+    ALL_SUBJECTS.forEach(function(s) {
+        var isHidden = !!currentConfig.locks[selectedClass][s];
+        var lbl = document.createElement('label');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = s;
+        cb.checked = isHidden;
+        cb.addEventListener('change', function() {
+            applySubjectHiding(selectedClass, s, cb.checked);
+            // Update status tag immediately
+            var tag = lbl.querySelector('.subject-hide-status');
+            if (cb.checked) {
+                tag.textContent = 'HIDDEN';
+                tag.className = 'subject-hide-status hidden-tag';
+            } else {
+                tag.textContent = 'VISIBLE';
+                tag.className = 'subject-hide-status visible-tag';
+            }
+        });
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = s;
+        var tag = document.createElement('span');
+        tag.className = 'subject-hide-status ' + (isHidden ? 'hidden-tag' : 'visible-tag');
+        tag.textContent = isHidden ? 'HIDDEN' : 'VISIBLE';
+        lbl.appendChild(cb);
+        lbl.appendChild(nameSpan);
+        lbl.appendChild(tag);
+        listEl.appendChild(lbl);
+    });
+    overlay.classList.add('active');
+}
+
+function closeHideSubjectPopup() {
+    var overlay = document.getElementById('subjectHidePopupOverlay');
+    overlay.classList.remove('active');
+}
+
+function applySubjectHiding(selectedClass, subject, shouldHide) {
+    if (!currentConfig.locks) currentConfig.locks = {};
+    if (!currentConfig.locks[selectedClass]) currentConfig.locks[selectedClass] = {};
+    currentConfig.locks[selectedClass][subject] = shouldHide;
+    // Immediately refresh the data entry subject dropdown so hidden/unhidden subjects appear instantly
+    populateDataSubjectSelect();
+    // Immediately refresh the monitor table if currently visible
+    var monitorClass = document.getElementById('monitorClassSelect');
+    if (monitorClass && monitorClass.value) {
+        refreshSubjectMonitor(monitorClass.value);
+    }
+    // If the data entry page is currently showing this class+subject, refresh it
+    var dataForm = document.getElementById('dataClassSelect');
+    var dataSubject = document.getElementById('dataSubjectSelect');
+    if (dataForm && dataSubject && dataForm.value === selectedClass && dataSubject.value === subject) {
+        showStudentMarksList();
+    }
+}
+
 function populateDataSubjectSelect() {
     const sel = document.getElementById('dataSubjectSelect');
     const form = document.getElementById('dataClassSelect').value;
@@ -221,7 +513,7 @@ function saveScoresAsExcel() {
 function saveSelectedSubjectsToRepo() {
     const form = document.getElementById('dataClassSelect').value;
     const subject = document.getElementById('dataSubjectSelect').value;
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     
     if (!form) {
         alert('Please select a Class first.');
@@ -388,7 +680,7 @@ function saveSelectedSubjectsToRepo() {
     /* Buttons */
     button {
         width: 100%;
-        max-width: 400px;
+                max-width: 400px;
         margin-top: 20px;
         padding: 14px;
         background: #1a2a6c;
@@ -497,8 +789,18 @@ function saveSelectedSubjectsToRepo() {
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
         margin: 20px auto;
         border: 3px double black;
+        border-radius: 12px;
         outline: 3px double black;
         outline-offset: 3px;
+    }
+
+    /* On-screen batch print clone: rounded frame */
+    .progressReportClone {
+        background-color: white;
+        color: black;
+        border: 3px double black;
+        border-radius: 12px;
+        box-shadow: 0 0 0 3px black, 0 6px 20px rgba(0, 0, 0, 0.1);
     }
 
     #reportDetails div { color: black; }
@@ -703,15 +1005,15 @@ function saveSelectedSubjectsToRepo() {
         #briefReport[style*="block"] {
             visibility: visible !important;
             position: absolute !important;
-            left: 1cm !important;
-            right: 1cm !important;
-            top: 2cm !important;
-            bottom: 1cm !important;
+            left: 0 !important;
+            right: 0 !important;
+            top: 0 !important;
+            bottom: 0 !important;
             display: flex !important;
             flex-direction: column !important;
-            width: calc(100% - 2cm) !important;
+            width: 100% !important;
             max-width: none !important;
-            min-height: calc(100% - 3cm) !important;
+            min-height: 100% !important;
             height: auto !important;
             margin: 0 !important;
             padding: 15px !important;
@@ -754,7 +1056,7 @@ function saveSelectedSubjectsToRepo() {
 
         @page { 
             size: A4 portrait; 
-            margin: 5mm !important;
+            margin: 2cm 1cm 1cm 1cm !important;
         }
 
         #progressReport, #briefReport {
@@ -765,12 +1067,210 @@ function saveSelectedSubjectsToRepo() {
         #resultsTable th, #resultsTable td,
         #briefResultsTable th, #briefResultsTable td {
             padding: 3px 2px !important;
-            font-size: 8pt !important;
+            font-size: 9pt !important;
         }
 
         #reportDetails p, #briefReportDetails p {
             margin-bottom: 2px !important;
             font-size: 10pt !important;
+        }
+
+        #batchPrintArea {
+            visibility: visible !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            position: absolute !important;
+            left: 0 !important;
+            right: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
+        }
+
+        #batchPrintArea * {
+            visibility: visible !important;
+        }
+
+        #batchPrintArea > .progressReportClone {
+            background-color: white !important;
+            color: black !important;
+            padding: 15px 15px 1cm 15px !important;
+            width: 100% !important;
+            max-width: 810px !important;
+            max-height: 297mm !important;
+            min-height: auto !important;
+            height: auto !important;
+            margin: 1.1cm auto 0 auto !important;
+            border: 3px double black !important;
+            border-radius: 12px !important;
+            box-shadow: 0 0 0 3px black !important;
+            page-break-after: always !important;
+            page-break-inside: avoid !important;
+            overflow: hidden !important;
+        }
+
+        #batchPrintArea > .progressReportClone:last-child {
+            page-break-after: auto !important;
+        }
+
+        #batchPrintArea > .progressReportClone {
+            transform-origin: top center !important;
+        }
+
+        #batchPrintArea .back-btn,
+        #batchPrintArea button,
+        #batchPrintArea select,
+        #batchPrintArea label,
+        #batchPrintArea input,
+        #batchPrintArea textarea {
+            display: none !important;
+        }
+
+        #batchPrintArea .table-wrapper {
+            overflow: visible !important;
+            width: 100% !important;
+        }
+
+        /* SURGICAL FIX: Make results table fill full width with SUBJECT, REMARKS, TEACHER equal width */
+        #batchPrintArea table#resultsTable,
+        #batchPrintArea .progressReportClone table {
+            width: 100% !important;
+            table-layout: fixed !important;
+        }
+        #batchPrintArea table#resultsTable th:nth-child(1),
+        #batchPrintArea table#resultsTable td:nth-child(1),
+        #batchPrintArea .progressReportClone table th:nth-child(1),
+        #batchPrintArea .progressReportClone table td:nth-child(1) {
+            width: 27% !important;
+        }
+        #batchPrintArea table#resultsTable th:nth-child(5),
+        #batchPrintArea table#resultsTable td:nth-child(5),
+        #batchPrintArea .progressReportClone table th:nth-child(5),
+        #batchPrintArea .progressReportClone table td:nth-child(5) {
+            width: 24% !important;
+        }
+        #batchPrintArea table#resultsTable th:nth-child(6),
+        #batchPrintArea table#resultsTable td:nth-child(6),
+        #batchPrintArea .progressReportClone table th:nth-child(6),
+        #batchPrintArea .progressReportClone table td:nth-child(6) {
+            width: 27% !important;
+        }
+        #batchPrintArea table#resultsTable th:nth-child(2),
+        #batchPrintArea table#resultsTable td:nth-child(2),
+        #batchPrintArea .progressReportClone table th:nth-child(2),
+        #batchPrintArea .progressReportClone table td:nth-child(2),
+        #batchPrintArea table#resultsTable th:nth-child(3),
+        #batchPrintArea table#resultsTable td:nth-child(3),
+        #batchPrintArea .progressReportClone table th:nth-child(3),
+        #batchPrintArea .progressReportClone table td:nth-child(3) {
+            width: 6.33% !important;
+        }
+        #batchPrintArea table#resultsTable th:nth-child(4),
+        #batchPrintArea table#resultsTable td:nth-child(4),
+        #batchPrintArea .progressReportClone table th:nth-child(4),
+        #batchPrintArea .progressReportClone table td:nth-child(4) {
+            width: 9.33% !important;
+        }
+        /* SURGICAL FIX: No text cutting — allow wrapping */
+        #batchPrintArea table#resultsTable td,
+        #batchPrintArea table#resultsTable th,
+        #batchPrintArea .progressReportClone table td,
+        #batchPrintArea .progressReportClone table th {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            word-wrap: break-word !important;
+        }
+
+        #batchPrintArea #reportHeader {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: flex-start !important;
+            justify-content: flex-start !important;
+            margin-bottom: 5px !important;
+            width: 100% !important;
+        }
+
+        #batchPrintArea #reportHeaderRight {
+            text-align: center !important;
+            flex: 1 !important;
+            margin-left: -15px !important;
+            font-size: 0.8em !important;
+            line-height: 1.4 !important;
+        }
+
+        #batchPrintArea #summaryAndKeyWrapper {
+            display: flex !important;
+            justify-content: space-between !important;
+            margin-top: 15px !important;
+            width: 100% !important;
+            text-align: left !important;
+        }
+
+        #batchPrintArea #reportSummary {
+            width: 100% !important;
+            text-align: left !important;
+        }
+
+        #batchPrintArea #gradeKeyPlaceholder {
+            width: 100% !important;
+            text-align: left !important;
+        }
+
+        #batchPrintArea #reportGradeKeyTable {
+            width: 50% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+            margin: 0 !important;
+        }
+
+        #batchPrintArea #reportGradeKeyTable th,
+        #batchPrintArea #reportGradeKeyTable td {
+            width: 25% !important;
+            text-align: center !important;
+        }
+
+        #batchPrintArea #gradeKeyTableNew {
+            margin-top: 5px !important;
+            width: 100% !important;
+            border-collapse: collapse !important;
+        }
+
+        #batchPrintArea #reportCommentsSection {
+            margin-top: 10px !important;
+            text-align: left !important;
+            width: 100% !important;
+        }
+
+        #batchPrintArea #reportGradeKeySection {
+            margin-top: 10px !important;
+            width: 100% !important;
+            text-align: left !important;
+        }
+
+        #batchPrintArea .logo {
+            max-width: 150px !important;
+            height: auto !important;
+            margin-bottom: 10px !important;
+        }
+
+        #batchPrintArea hr {
+            border-top: 2px solid black !important;
+            margin: 10px 0 !important;
+        }
+
+        #batchPrintArea .info-row {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            width: 100% !important;
+        }
+
+        #batchPrintArea .info-row span {
+            display: inline !important;
         }
     }
 
@@ -795,6 +1295,89 @@ function saveSelectedSubjectsToRepo() {
 }
 .locked { color: #e74c3c; }
 .unlocked { color: #2ecc71; }
+
+/* === SUBJECT HIDE/UNHIDE POPUP MODAL === */
+#subjectHidePopupOverlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 9000;
+    justify-content: center;
+    align-items: center;
+}
+#subjectHidePopupOverlay.active {
+    display: flex;
+}
+#subjectHidePopupBox {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 20px 18px;
+    max-width: 420px;
+    width: 92%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    max-height: 80vh;
+    overflow-y: auto;
+    text-align: center;
+}
+#subjectHidePopupBox h3 {
+    color: #1a2a6c;
+    margin: 0 0 6px 0;
+    font-size: 1.15em;
+}
+#subjectHidePopupClass {
+    color: #e67e22;
+    font-weight: 700;
+    font-size: 0.95em;
+    margin-bottom: 12px;
+}
+#subjectHideCheckboxList {
+    text-align: left;
+    max-height: 45vh;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 14px;
+}
+#subjectHideCheckboxList label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 6px;
+    margin: 0;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    font-size: 0.95em;
+    color: #2c3e50;
+    transition: background 0.15s;
+}
+#subjectHideCheckboxList label:last-child {
+    border-bottom: none;
+}
+#subjectHideCheckboxList label:hover {
+    background: #f7f7f7;
+}
+#subjectHideCheckboxList input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    max-width: 18px;
+    margin: 0;
+    accent-color: #e74c3c;
+    cursor: pointer;
+}
+.subject-hide-status {
+    font-size: 0.8em;
+    margin-left: auto;
+    font-weight: 600;
+}
+.subject-hide-status.hidden-tag {
+    color: #e74c3c;
+}
+.subject-hide-status.visible-tag {
+    color: #2ecc71;
+}
 
 
 /* === MOBILE DATA ENTRY ALIGNMENT FIX (SURGICAL) === */
@@ -927,7 +1510,7 @@ function saveSelectedSubjectsToRepo() {
 </div>
 
 <div id="initialPage" class="page">
-    <img src="https://raw.githubusercontent.com/enitac/c/main/logo.png" alt="Chimteka Secondary School Logo" class="logo">
+    <img src="https://raw.githubusercontent.com/enitac/c/main/logo.png" alt="Magawass Secondary School Logo" class="logo">
     <h1><p style="font-size:28px;">CHIMTEKA COMMUNITY DAY SECONDARY-ODL</p></h1>
     <h2>EXAM PORTAL</h2>
     <label for="selectedForm">Select Form / Sankhani Kalasi</label>
@@ -948,7 +1531,7 @@ function saveSelectedSubjectsToRepo() {
         
     </div>
 
-    <button onclick="openAdminLogin()">LOGIN</button>
+    <button onclick="openAdminLogin()"> </button>
     <p style="font-size:11px; margin-top: 15px; color: #7f8c8d;">Designed by CHIKUMBUTSO LUBAINI-0 994 039 325. All rights reserved.</p>
 
     <!-- Front Page Popup (only visible inside #initialPage) -->
@@ -968,8 +1551,8 @@ function saveSelectedSubjectsToRepo() {
         <div id="briefReportHeaderRight">
             <h3>CHIMTEKA COMMUNITY DAY SECONDARY SCHOOL</h3>
             Private Bag 41,<br>
-            Magawa,<br>
-            Mchinji.
+            MAGAWA,<br>
+            MCHINJI.
         </div>
     </header>
 
@@ -1022,7 +1605,7 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
 <h1><p style="font-size:25px;">CHIMTEKA COMMUNITY DAY SECONDARY SCHOOL</p></h1>
  <div style="text-align: center;">
 
-               <p style="margin:5px 0; font-size: 14pt;"><strong>Private  Bag  3,<br>Chimteka, Mchinji.</strong><br>
+               <p style="margin:5px 0; font-size: 14pt;"><strong>Private  Bag  41,<br>MAGAWA, MCHINJI.</strong><br>
 
 
         </div>
@@ -1087,17 +1670,20 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
 
 <div id="adminLoginPage" class="page">
     <h2 id="adminLabel">Enter Password</h2>
-    <input type="password" id="adminPassword" placeholder="">
+    <input type="password" id="adminPassword" placeholder="" oninput="document.getElementById('adminLoginError').style.display='none'">
+    <div id="adminLoginError" style="color:#e74c3c; font-size:0.9em; display:none; margin-top:8px;">ADMIN</div>
     <button id="adminLoginBtn" onclick="verifyAdmin()">Login</button>
+    <button id="setupWizardBtn" onclick="openSetupWizard()" style="background:#e67e22; margin-top:10px;">First-Time Setup</button>
+    <button id="reaccessSetupBtn" onclick="openSetupAuth()" style="background:#e74c3c; margin-top:10px; display:none;">Re-access Setup</button>
     <button onclick="backToInitialPage()">Back</button>
 </div>
 
 <div id="adminHomePage" class="page">
-    <h2>Enter code to load and upload</h2>
-    <input type="password" id="githubToken" placeholder="" style="margin-bottom: 20px;">
+    <h2>EXAM MANAGEMENT SYSTEM</h2>
+    <p style="font-size:0.85em; color:#27ae60; margin:10px 0 20px 0;">ACTIVE</p>
     <button onclick="openDataEntryAuth()">DATA ENTRY</button>
     <button onclick="openUploadsAuth()">FILE UPLOADS</button>
-    <button onclick="openSheetsPage()">PROGRESS,GRADE,ANALYSIS SHEETS</button>
+    <button onclick="openSheetsPage()">PROGRESS,GRADE,DATA ANALYSIS SHEETS</button>
     <button onclick="openSubjectEntryMonitor()">Subject Score Entry Monitor Below</button>
    
     <select id="monitorClassSelect" onchange="openSubjectEntryMonitor()">
@@ -1280,6 +1866,20 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
     <button onclick="overwriteStudentData()" style="background: #e67e22;">Overwrite Existing Student</button>
 
     <hr style="margin: 20px 0; border: 1px solid #ccc;">
+    <h3>Edit Student Names &amp; Sex</h3>
+    <p style="font-size: 0.9em; color: #7f8c8d; margin-bottom: 10px;">Select a class to edit student names and sex in bulk.</p>
+    <label for="editNamesClassSelect">Select Class:</label>
+    <select id="editNamesClassSelect" onchange="loadEditNamesUI()">
+        <option value="">--Select Class--</option>
+        <option value="form1">Form 1</option>
+        <option value="form2">Form 2</option>
+        <option value="form3">Form 3</option>
+        <option value="form4">Form 4</option>
+    </select>
+    <div id="editNamesContainer" style="margin-top:10px;max-height:400px;overflow-y:auto;border:1px solid #ddd;border-radius:6px;display:none;"></div>
+    <button id="saveEditedNamesBtn" onclick="saveEditedNames()" style="background:#27ae60;margin-top:10px;display:none;">Save Changes</button>
+
+    <hr style="margin: 20px 0; border: 1px solid #ccc;">
     <h3>Clear Scores</h3>
     <p style="font-size: 0.9em; color: #7f8c8d; margin-bottom: 10px;">Clear scores while keeping student details intact.</p>
     <label for="clearScoresClassSelect">Select Class:</label>
@@ -1306,21 +1906,18 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
 
 <hr style="margin: 20px 0; border: 1px solid #ccc;">
 <h3>Hide / Unhide Subject Score Entry</h3>
+<p style="font-size:0.9em; color:#7f8c8d; margin-bottom:10px;">Select a class, then click the button below to choose which subjects to hide from data entry. Checked subjects will be invisible until unchecked.</p>
 
 <label for="lockClassSelect">Select Class:</label>
-<select id="lockClassSelect" onchange="populateLockSubjects()">
+<select id="lockClassSelect">
     <option value="form1">Form 1</option>
     <option value="form2">Form 2</option>
     <option value="form3">Form 3</option>
     <option value="form4">Form 4</option>
 </select>
 
-<label for="lockSubjectSelect">Select Subject:</label>
-<select id="lockSubjectSelect"></select>
-
-<button onclick="toggleSubjectLock()">Subject Score Entry Hidden/Unhidden</button>
+<button onclick="openHideSubjectPopup()" style="background: #e67e22;">Hide / Unhide Subjects</button>
 <button onclick="handleSaveConfig()" style="background: #28a745; margin-top: 10px;">Save</button>
-<p id="lockStatus" style="font-size:11px;color:#e74c3c;"></p>
 
 <hr style="margin: 20px 0; border: 1px solid #ccc;">
 <h3>Grade Range Editor</h3>
@@ -1496,6 +2093,32 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
         <button onclick="generateAllProgressReports()" style="margin-top: 10px; background: #28a745;">Progress Report Generator (Batch PDF)</button>
     </div>
 
+    <button id="batchPrintBtn" onclick="openBatchPrintSelector()" style="margin-top: 10px; background: #8e44ad;">Batch Print Progress Reports</button>
+
+    <!-- Batch Print Selection Container (hidden by default) -->
+    <div id="batchPrintSelector" style="display:none; margin-top:15px; border:1px solid #ddd; border-radius:8px; padding:15px; text-align:center;">
+        <h3 style="font-size:1em; color:#34495e; margin-bottom:10px;">Select Students to Print</h3>
+        <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button onclick="batchSelectAll()" class="small-btn" style="background:#27ae60; max-width:120px; margin:0; padding:8px 12px; font-size:0.85em;">Select All</button>
+            <button onclick="batchDeselectAll()" class="small-btn" style="background:#e74c3c; max-width:120px; margin:0; padding:8px 12px; font-size:0.85em;">Deselect All</button>
+            <button onclick="batchSelectRange()" class="small-btn" style="background:#2980b9; max-width:120px; margin:0; padding:8px 12px; font-size:0.85em;">Select Range</button>
+        </div>
+        <div id="batchRangeInputs" style="display:none; margin-bottom:10px;">
+            <div style="display:flex; justify-content:center; gap:6px; align-items:center;">
+                <label style="margin:0; font-size:0.85em; font-weight:500;">From #</label>
+                <input type="number" id="batchRangeFrom" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:0.85em;">
+                <label style="margin:0; font-size:0.85em; font-weight:500;">To #</label>
+                <input type="number" id="batchRangeTo" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:0.85em;">
+                <button onclick="applyBatchRange()" class="small-btn" style="background:#2980b9; max-width:60px; margin:0; padding:5px 8px; font-size:0.85em;">Go</button>
+            </div>
+        </div>
+        <div id="batchStudentList" style="max-height:300px; overflow-y:auto; border:1px solid #ddd; border-radius:6px; text-align:left;"></div>
+        <div style="display:flex; justify-content:center; gap:8px; margin-top:10px;">
+            <button onclick="executeBatchPrint()" style="background:#27ae60; max-width:200px; margin:0; padding:10px 16px;">Print Selected</button>
+            <button onclick="closeBatchPrintSelector()" style="background:#95a5a6; max-width:120px; margin:0; padding:10px 16px;">Cancel</button>
+        </div>
+    </div>
+
     <div style="display: flex; justify-content: center; gap: 10px; margin-top: 20px; max-width: 400px; margin-left: auto; margin-right: auto; flex-wrap: wrap;">
         <button onclick="openGradesPage()" style="width: 195px; max-width: 195px; margin: 5px;">View Grade Sheet</button>
         <button onclick="openAnalysisSelector()" style="width: 195px; max-width: 195px; margin: 5px;">View Analysis</button>
@@ -1520,6 +2143,7 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
     <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
         <button onclick="exportGradeSheetWithFilename()" class="small-btn" style="background: #28a745; margin: 5px;">Export to Excel</button>
         <button onclick="printSheet('gradesPage')" class="small-btn" style="max-width: 150px; margin: 5px;">Print Sheet</button>
+        <button id="gradeSortToggleBtn" onclick="toggleGradeSort()" class="small-btn" style="background: #e67e22; margin: 5px; display: none;">Sort: Pass → Fail</button>
     </div>
 
     <div id="gradesSheetTableWrapper" class="table-wrapper" style="text-align: center;">
@@ -1553,7 +2177,8 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
 const GITHUB_USER = 'enitac';
 const GITHUB_REPO = 'c1';
 const CONFIG_FILE = 'config.json';
-const ADMIN_PASSWORD = '00n'; // Placeholder for security testing/local use
+// Admin password is now the decryption password — set during First-Time Setup
+// No hardcoded password stored in file
 
 // --- CONFIGURATION STATE ---
 let currentConfig = null;
@@ -1569,10 +2194,9 @@ const SUBJECT_MAP = {
     "Bible Knowledge": "BK",
     "Biology": "Bio",
     "Chemistry": "Chem",
+    "Clothing and Textile": "CTEX",
     "Chichewa": "Chic",
-    "Clothing and Textiles": "CTEX",
     "English": "Eng",
-    "French": "Fr",
     "Geography": "Geo",
     "History": "Hist",
     "Home Economics": "HEc",
@@ -1651,7 +2275,7 @@ function computeGradeSheetPositions(students) {
     sorted.forEach((s,i)=>{
         const pos = (s.aggregate === lastAgg) ? lastPos : i + 1;
         s.__gradePosition = pos;
-        lastAgg = lastAgg;
+        lastAgg = s.aggregate;
         lastPos = pos;
     });
     return sorted;
@@ -1666,7 +2290,7 @@ function computePositionsByAggregate(students) {
     sorted.forEach((s,i)=>{
         const pos = (s.aggregate === lastAgg) ? lastPos : i + 1;
         s.position = pos;
-        lastAgg = lastAgg;
+        lastAgg = s.aggregate;
         lastPos = pos;
     });
     return sorted;
@@ -2189,6 +2813,52 @@ function printSheet(pageId) {
             border: 1px solid black !important;
             text-align: center !important;
         }
+        ${pageId === 'analysisPage' ? `
+        #analysisPage {
+            width: 75% !important;
+            left: auto !important;
+            right: auto !important;
+            margin: 0 auto !important;
+        }
+        #analysisPage #analysisTable {
+            table-layout: fixed !important;
+        }
+        #analysisPage #analysisTable th,
+        #analysisPage #analysisTable td {
+            padding: 3px 2px !important;
+            font-size: 9pt !important;
+            white-space: nowrap !important;
+        }
+        #analysisPage #analysisTable th:first-child,
+        #analysisPage #analysisTable td:first-child {
+            width: auto !important;
+            max-width: none !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: unset !important;
+            word-wrap: break-word !important;
+        }
+        #analysisPage #analysisTable th:not(:first-child),
+        #analysisPage #analysisTable td:not(:first-child) {
+            width: 45px !important;
+            max-width: 45px !important;
+        }
+        #analysisPage #analysisSummaryTable,
+        #analysisPage #analysisSNETable {
+            width: 48% !important;
+        }
+        #analysisPage #analysisSummaryTable th,
+        #analysisPage #analysisSummaryTable td,
+        #analysisPage #analysisSNETable th,
+        #analysisPage #analysisSNETable td {
+            padding: 3px 4px !important;
+            font-size: 9pt !important;
+            white-space: nowrap !important;
+        }
+        #analysisPage h2 {
+            font-size: 13pt !important;
+        }
+        ` : ''}
         #${pageId} td:first-child, #${pageId} th:first-child,
         #${pageId} td:nth-child(2), #${pageId} th:nth-child(2),
         #${pageId} td:nth-child(3), #${pageId} th:nth-child(3) {
@@ -2221,6 +2891,10 @@ function safeMsg(error) {
     let msg = error.message || String(error);
     return msg.replace(/https?:\/\/[^\s]+/g, '[connection error]');
 }
+
+// ============================================================
+// COMMIT FILE: PUT/DELETE via GitHub Contents API
+// ============================================================
 
 async function commitFile(path, message, content, sha, token, method) {
     const url = `${API_BASE}${path}`;
@@ -2287,18 +2961,35 @@ async function fetchClassData(form) {
         return currentClassData[form];
     }
 
-    const token = document.getElementById('githubToken') ? document.getElementById('githubToken').value : null;
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const token = getDecryptedToken();
 
     try {
         updateLoadingPercent(20);
-        const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${form}.csv`);
-
-        if (!response.ok) {
-            console.warn(`CSV file for ${form} not found.`);
-            return [];
+        // FIX: Use authenticated Contents API (raw.githubusercontent.com ignores Bearer tokens on private repos)
+        let csv;
+        if (token) {
+            const response = await fetch(`${API_BASE}${form}.csv`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            if (!response.ok) {
+                console.warn(`CSV file for ${form} not found via API (status ${response.status}).`);
+                return [];
+            }
+            const data = await response.json();
+            // FIX: GitHub API wraps base64 with newlines — strip them before decoding
+            csv = atob(data.content.replace(/\n/g, ''));
+        } else {
+            // Fallback to raw URL for public repos without token
+            const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${form}.csv`);
+            if (!response.ok) {
+                console.warn(`CSV file for ${form} not found.`);
+                return [];
+            }
+            csv = await response.text();
         }
-        const csv = await response.text();
         const data = normalizeCSVData(csv).filter(s => s && s["Exam Number"]);
         currentClassData[form] = data;
         updateLoadingPercent(80);
@@ -2329,7 +3020,8 @@ async function fetchConfig(token) {
 
         const data = await response.json();
         configSha = data.sha;
-        const content = JSON.parse(atob(data.content));
+        // FIX: GitHub API wraps base64 with newlines — strip them before decoding
+        const content = JSON.parse(atob(data.content.replace(/\n/g, '')));
         const defaultConfig = getDefaultConfig();
         currentConfig = {
             ...defaultConfig,
@@ -2377,7 +3069,7 @@ async function initializeConfig(token) {
 }
 
 async function handleSaveConfig() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     if (!token) {
         alert('Please enter your Authorization Code.');
         return;
@@ -2399,7 +3091,8 @@ async function handleSaveConfig() {
         hiddenSubjects: currentConfig.hiddenSubjects || {},
         locks: currentConfig.locks || {},
         passwordEnabled: currentConfig.passwordEnabled,
-        sneColumnVisible: currentConfig.sneColumnVisible !== undefined ? currentConfig.sneColumnVisible : true
+        sneColumnVisible: currentConfig.sneColumnVisible !== undefined ? currentConfig.sneColumnVisible : true,
+        setupPassword: currentConfig.setupPassword || null
     };
 
     ALL_CLASSES.forEach(form => {
@@ -2441,7 +3134,7 @@ async function handleSaveConfig() {
 }
 
 async function uploadCSV() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('classDropdown').value;
     const fileInput = document.getElementById('csvUpload');
 
@@ -2460,7 +3153,7 @@ async function uploadCSV() {
 
     const file = fileInput.files[0];
     const fileName = `${form}.csv`;
-    const commitMessage = `Upload new data for ${form} (${file.name})`;
+    const commitMessage = `Upload merged data for ${form} (${file.name})`;
 
     showLoading();
     updateLoadingPercent(10);
@@ -2493,12 +3186,12 @@ async function uploadCSV() {
         hideLoading();
         if (result) {
             alert(`File ${fileName} uploaded/updated successfully!`);
-            // --- SURGICAL FIX: Parse and cache uploaded data in memory for instant access ---
+            // Parse and cache uploaded data in memory for instant access
             try {
                 const csvText = decodeURIComponent(escape(atob(base64Content)));
                 currentClassData[form] = normalizeCSVData(csvText).filter(s => s && s["Exam Number"]);
             } catch(e) {
-                currentClassData[form] = null; // Fallback to re-fetch on next access
+                currentClassData[form] = null;
             }
             currentDataSha[form] = result.content.sha;
             refreshFileList();
@@ -2513,7 +3206,7 @@ async function uploadCSV() {
 }
 
 async function refreshFileList() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
      const deleteDropdown = document.getElementById('deleteDropdown');
     deleteDropdown.innerHTML = '<option value="">-- Select CSV File --</option>';
     currentDataSha = {};
@@ -2553,7 +3246,7 @@ async function refreshFileList() {
 }
 
 async function deleteCSV() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const deleteDropdown = document.getElementById('deleteDropdown');
     const selectedValue = deleteDropdown.value;
 
@@ -2599,7 +3292,7 @@ async function deleteCSV() {
 async function submitAndSaveScores() {
     const form = document.getElementById('dataClassSelect').value;
     const subject = document.getElementById('dataSubjectSelect').value;
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
 
     if (!form || !subject) {
         alert('Please select a Class and Subject.');
@@ -2661,7 +3354,6 @@ async function submitAndSaveScores() {
 
             updateLoadingPercent(100);
             hideLoading();
-            
         }
 
     } catch (error) {
@@ -2712,32 +3404,287 @@ async function deleteScore() {
 }
 
 function backToInitialPage() {
+    // ERASE TOKEN: Complete logout — wipe everything from memory
+    eraseTokenAndSession();
+    
     goToPage('initialPage');
     document.getElementById('adminPassword').value = '';
-    document.getElementById('githubToken').value = '';
-    currentConfig = null;
-    configSha = null;
-    currentClassData = {};
-    currentDataSha = {};
-    initializeConfig(null);
 }
 
-function openAdminLogin() {
+
+function openSetupWizard() {
+    document.getElementById('setupToken').value = '';
+    document.getElementById('setupPassword').value = '';
+    document.getElementById('setupPasswordConfirm').value = '';
+    document.getElementById('setupEncryptedOutput').style.display = 'none';
+    document.getElementById('encryptedOutputLabel').style.display = 'none';
+    document.getElementById('copyTokenBtn').style.display = 'none';
+    document.getElementById('setupError').style.display = 'none';
+    document.getElementById('setupSuccess').style.display = 'none';
+    // Clear setup protection password field
+    var adminPwdField = document.getElementById('setupAdminPwd');
+    if (adminPwdField) adminPwdField.value = '';
+    goToPage('setupWizardPage');
+}
+
+async function runSetupEncrypt() {
+    const token = document.getElementById('setupToken').value.trim();
+    const password = document.getElementById('setupPassword').value;
+    const confirm = document.getElementById('setupPasswordConfirm').value;
+    const errorEl = document.getElementById('setupError');
+    const successEl = document.getElementById('setupSuccess');
+    
+    errorEl.style.display = 'none';
+    successEl.style.display = 'none';
+    
+    if (!token) {
+        errorEl.textContent = 'Please enter your GitHub token.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    
+    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+        errorEl.textContent = 'Token should start with ghp_ or github_pat_';
+        errorEl.style.display = 'block';
+        return;
+    }
+    
+    if (!password || password.length < 4) {
+        errorEl.textContent = 'Password must be at least 4 characters.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    
+    // Validate setup protection password (required on first setup, optional on re-setup)
+    var setupAdminPwd = document.getElementById('setupAdminPwd').value.trim();
+    var isFirstSetup = !currentConfig || !currentConfig.setupPassword;
+    if (isFirstSetup && !setupAdminPwd) {
+        errorEl.textContent = 'Please choose a Setup Protection Password.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    if (setupAdminPwd && setupAdminPwd.length < 4) {
+        errorEl.textContent = 'Setup Protection Password must be at least 4 characters.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    
+    if (password !== confirm) {
+        errorEl.textContent = 'Passwords do not match.';
+        errorEl.style.display = 'block';
+        return;
+    }
+    
+    try {
+        successEl.textContent = 'Encrypting & uploading to GitHub...';
+        successEl.style.display = 'block';
+        
+        // Step 1: Encrypt the token with the password
+        const encrypted = await encryptToken(token, password);
+        
+        // Step 2: Temporarily inject the token so we can push to GitHub
+        _decryptedGitHubToken = token;
+        _isLoggedIn = true;
+        
+        // Step 3: Push the encrypted blob to GitHub as .token file
+        try {
+            await pushEncryptedTokenToGitHub(encrypted);
+        } catch (pushErr) {
+            // If push fails, still keep token in session
+            console.warn('Could not push token to GitHub (repo may be private or token may lack write access):', pushErr);
+            // Store in session memory as fallback
+            _sessionEncryptedToken = encrypted;
+        }
+        
+        // Step 4: Save setup protection password into the config on GitHub
+        if (setupAdminPwd) {
+            try {
+                await initializeConfig(token);
+                currentConfig.setupPassword = setupAdminPwd;
+                await handleSaveConfig();
+            } catch (configErr) {
+                console.warn('Could not save setup protection password to config:', configErr);
+            }
+        }
+
+        // Step 5: Show success — token is now stored on GitHub
+        _sessionEncryptedToken = encrypted; // Also keep in session for immediate login
+        
+        document.getElementById('setupEncryptedOutput').value = encrypted;
+        document.getElementById('setupEncryptedOutput').style.display = 'block';
+        document.getElementById('encryptedOutputLabel').style.display = 'block';
+        document.getElementById('copyTokenBtn').style.display = 'block';
+        
+        successEl.style.color = '#27ae60';
+        successEl.textContent = 'Token encrypted and saved to GitHub! You can now log in with your password from any device.';
+        successEl.style.display = 'block';
+        
+        // Auto-navigate to login page after a short delay
+        setTimeout(function() {
+            eraseTokenAndSession(); // Wipe the temp injected token
+            document.getElementById('adminPassword').value = password;
+            goToPage('adminLoginPage');
+        }, 2500);
+    } catch (e) {
+        eraseTokenAndSession(); // Clean up on failure
+        errorEl.textContent = 'Setup failed: ' + e.message;
+        errorEl.style.display = 'block';
+    }
+}
+
+function copyEncryptedToken() {
+    const output = document.getElementById('setupEncryptedOutput');
+    if (!output.value) {
+        alert('Nothing to copy. Encrypt your token first.');
+        return;
+    }
+    output.select();
+    output.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(output.value).then(() => {
+        const btn = document.getElementById('copyTokenBtn');
+        btn.textContent = 'Copied!';
+        btn.style.background = '#27ae60';
+        setTimeout(() => {
+            btn.textContent = 'Copy to Clipboard';
+        }, 2000);
+    }).catch(() => {
+        // Fallback for older browsers
+        document.execCommand('copy');
+        const btn = document.getElementById('copyTokenBtn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
+    });
+}
+
+async function openAdminLogin() {
+    // Check GitHub to see if encrypted token exists — persistent across all devices
+    if (!_setupDoneOnce) {
+        var tokenExists = await checkTokenExists();
+        if (tokenExists) _setupDoneOnce = true;
+    }
+    var setupBtn = document.getElementById('setupWizardBtn');
+    var reaccessBtn = document.getElementById('reaccessSetupBtn');
+    if (setupBtn) setupBtn.style.display = _setupDoneOnce ? 'none' : 'block';
+    if (reaccessBtn) reaccessBtn.style.display = _setupDoneOnce ? 'block' : 'none';
     goToPage('adminLoginPage');
 }
 
 async function verifyAdmin() {
-    const password = document.getElementById('adminPassword').value;
-    if (password === ADMIN_PASSWORD) {
-        await initializeConfig(document.getElementById('githubToken').value);
+    var password = document.getElementById('adminPassword').value;
+    var errorEl = document.getElementById('adminLoginError');
+    if (errorEl) errorEl.style.display = 'none';
+
+    if (!password) {
+        if (errorEl) { errorEl.textContent = 'Please enter your password.'; errorEl.style.display = 'block'; }
+        return;
+    }
+
+    try {
+        // ============================================================
+        // LOGIN FLOW: Fetch encrypted token from GitHub → Decrypt → Inject
+        // ============================================================
+        
+        // Step 1: Fetch the encrypted token from GitHub
+        var encryptedSource = _sessionEncryptedToken || null;
+        if (!encryptedSource) {
+            var fetched = await fetchEncryptedTokenFromGitHub();
+            if (!fetched) {
+                throw new Error('No encrypted token found on GitHub. Please click "First-Time Setup" to configure your token.');
+            }
+            encryptedSource = fetched.encrypted;
+        }
+
+        // Step 2: Decrypt the token using the password
+        var token = await decryptToken(encryptedSource, password);
+
+        // Step 3: Validate the decrypted token against GitHub API
+        var validation = await fetch('https://api.github.com/user', {
+            headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (!validation.ok) {
+            throw new Error('GitHub rejected the token (HTTP ' + validation.status + '). Invalid or expired.');
+        }
+
+        // Step 4: INJECT TOKEN — make it available to all functions
+        _decryptedGitHubToken = token;
+        _isLoggedIn = true;
+        _sessionEncryptedToken = encryptedSource; // Cache for session
+
+        // Step 5: Verify WRITE access to the repo (not just read access)
+        // This catches tokens that can read but can't save — fail fast before the user tries
+        try {
+            var testResponse = await fetch(`${API_BASE}${CONFIG_FILE}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            // If we can read the config, that's a good sign — but let's also verify the repo is accessible
+            if (testResponse.status === 404) {
+                // Config doesn't exist yet — that's OK for first time, repo access works
+            } else if (testResponse.status === 401 || testResponse.status === 403) {
+                throw new Error('Your token can read user info but CANNOT access the repository. Make sure your token has the "repo" scope enabled.');
+            }
+        } catch (writeTestErr) {
+            if (writeTestErr.message.indexOf('repo') >= 0) {
+                throw writeTestErr; // Re-throw our custom error
+            }
+            // Network error or other issue — don't block login for this
+            console.warn('Write permission check failed (non-blocking):', writeTestErr);
+        }
+
+        // Step 6: Hide the orange button and show the red re-access button
+        _setupDoneOnce = true;
+        var setupBtn = document.getElementById('setupWizardBtn');
+        var reaccessBtn = document.getElementById('reaccessSetupBtn');
+        if (setupBtn) setupBtn.style.display = 'none';
+        if (reaccessBtn) reaccessBtn.style.display = 'block';
+
+        // Step 7: Load config and enter admin dashboard
+        await initializeConfig(token);
         goToPage('adminHomePage');
-    } else {
-        alert('Invalid Password.');
+
+    } catch (e) {
+        console.error('Login failed:', e);
+        // ERASE TOKEN on login failure — security cleanup
+        eraseTokenAndSession();
+        
+        if (errorEl) {
+            var hint = '';
+            if (e.message.indexOf('No encrypted token') >= 0) {
+                hint = ' Click "First-Time Setup" below to configure.';
+            } else if (e.message.indexOf('GitHub rejected') >= 0) {
+                hint = ' The token stored on GitHub may be expired. Run Setup again with a new token.';
+            }
+            errorEl.textContent = e.message + hint;
+            errorEl.style.display = 'block';
+        }
+        // On failure: show orange button only if setup has never been done, hide red button
+        var setupBtn = document.getElementById('setupWizardBtn');
+        var reaccessBtn = document.getElementById('reaccessSetupBtn');
+        if (setupBtn) setupBtn.style.display = _setupDoneOnce ? 'none' : 'block';
+        if (reaccessBtn) reaccessBtn.style.display = _setupDoneOnce ? 'block' : 'none';
     }
 }
 
 function openAdminHome() {
     goToPage('adminHomePage');
+}
+
+// --- SETUP RE-ACCESS: Password-gated re-entry to setup wizard ---
+async function openSetupAuth() {
+    if (!currentConfig || !currentConfig.setupPassword) {
+        alert('No setup protection password is configured. Please contact your administrator.');
+        return;
+    }
+    var pass = await showPasswordModal('Enter Setup Protection Password to re-access Setup:');
+    if (pass === null) return; // User cancelled
+    if (pass !== currentConfig.setupPassword) {
+        alert('Incorrect password. Access denied.');
+        return;
+    }
+    openSetupWizard();
 }
 
 // --- CUSTOM PASSWORD MODAL (shows dots for security) ---
@@ -2793,7 +3740,7 @@ function showPasswordModal(message) {
 }
 
 async function openUploadsAuth() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     if (!token) {
         alert('You need Authorization Code.');
         return;
@@ -2801,7 +3748,7 @@ async function openUploadsAuth() {
     // Custom password modal with masked input (dots)
     const pass = await showPasswordModal('Enter password to access File Uploads:');
     if (pass === null) return; // User cancelled
-    if (pass !== 'exam00n') {
+    if (pass !== 'exam0') {
         alert('Incorrect password. Access denied.');
         return;
     }
@@ -2815,11 +3762,11 @@ async function openUploadsAuth() {
 }
 
 // --- ARCHIVE SECTION FUNCTIONS ---
-const ARCHIVE_REPO = 'c2';
+const ARCHIVE_REPO = 'm2';
 const ARCHIVE_API_BASE = `https://api.github.com/repos/${GITHUB_USER}/${ARCHIVE_REPO}/contents/`;
 
 async function archiveExamData() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('archiveClassSelect').value;
     const year = document.getElementById('archiveYearInput').value.trim();
     const term = document.getElementById('archiveTermSelect').value;
@@ -2883,7 +3830,7 @@ async function archiveExamData() {
         if (existingSha) commitBody.sha = existingSha;
 
         const commitResponse = await fetch(commitUrl, {
-            method: existingSha ? 'PUT' : 'PUT',
+            method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Accept': 'application/vnd.github.v3+json',
@@ -2913,7 +3860,7 @@ async function archiveExamData() {
 
 // --- FUNCTION TO CLEAR ARCHIVE DATA ---
 async function clearArchiveData() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('archiveClassSelect').value;
     const year = document.getElementById('archiveYearInput').value.trim();
     const term = document.getElementById('archiveTermSelect').value;
@@ -3012,7 +3959,7 @@ async function searchArchiveResults() {
         return;
     }
 
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     if (!token) {
         resultsDiv.innerHTML = '<p style="color:#e74c3c;">Authorization Code required to search archives.</p>';
         return;
@@ -3395,7 +4342,7 @@ function saveArchiveDetailPdf() {
 
 
 function openDataEntryAuth() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     if (!token) {
         alert('You need Authorization Code.');
         return;
@@ -4013,10 +4960,14 @@ async function displayScoreSheet() {
     wrapper.innerHTML = html;
 }
 
+// --- Grade sheet cached data for sort toggle ---
+let _gradeSheetData = null; // { form, isUpperForm, studentsWithMetrics }
+
 async function displayGradesSheet() {
     const form = document.getElementById('gradesClassSelect').value;
     const wrapper = document.getElementById('gradesSheetTableWrapper');
     wrapper.innerHTML = '';
+    document.getElementById('gradeSortToggleBtn').style.display = 'none';
     if (!form) return;
     const data = await fetchClassData(form);
     if (data.length === 0) {
@@ -4031,20 +4982,13 @@ async function displayGradesSheet() {
     const isUpperForm = form === 'form3' || form === 'form4';
     const finalColHeader = isUpperForm ? 'Aggregate' : 'Total';
 
-    let html = `<table id="gradesTable"><thead><tr><th style="width:5%;">POS</th><th style="width:5%;">Reg</th><th style="width:15%;">Name</th><th style="width:5%;">SEX</th><th style="width:5%;">SNE<br><span style="font-weight:normal;font-size:0.8em;">(SN)</span></th>`;
-    ALL_SUBJECTS.forEach(sub => { 
-        // --- SURGICAL FIX: Skip hidden subjects ---
-        if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][sub]) return;
-        html += `<th>${getSubjectShortName(sub)}</th>`; 
-    });
-    html += `<th>${finalColHeader}</th><th>Remark</th></tr></thead><tbody>`;
-
     const studentsWithMetrics = [];
     for (const student of data) {
         const metrics = await calculateStudentMetrics(student, form);
         studentsWithMetrics.push({ student, metrics, examNo: student["Exam Number"] });
     }
 
+    // Calculate positions
     let rankableStudents = studentsWithMetrics.filter(s => s.metrics.rankable);
     rankableStudents.sort((a, b) => a.metrics.overallMetric - b.metrics.overallMetric);
 
@@ -4066,45 +5010,94 @@ async function displayGradesSheet() {
         student.__numericPosition = numericPosition;
     });
 
-    studentsWithMetrics.sort((a, b) => a.student.__numericPosition - b.student.__numericPosition);
+    // Cache for toggle re-use
+    _gradeSheetData = { form, isUpperForm, studentsWithMetrics };
 
-    studentsWithMetrics.forEach(({ student, metrics }) => {
-        const position = student.__position;
+    // Render table
+    renderGradeSheetTable(form, isUpperForm, studentsWithMetrics);
+    document.getElementById('gradeSortToggleBtn').style.display = '';
+    document.getElementById('gradeSortToggleBtn').textContent = 'Sort: Pass \u2192 Fail';
+    document.getElementById('gradeSortToggleBtn').style.background = '#e67e22';
+}
 
-        let rowHtml = `<tr><td>${position}</td><td>${student["Exam Number"]}</td><td style="text-align:left;">${student["STUDENT'S NAME"]}</td><td>${student["Sex"] || '-'}</td><td>${student["SN"] || ''}</td>`;
+function _buildGradeRowHtml(form, { student, metrics }) {
+    const position = student.__position;
 
-        ALL_SUBJECTS.forEach(sub => {
-            // --- SURGICAL FIX: Skip hidden subjects ---
-            if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][sub]) return;
+    let rowHtml = `<tr><td>${position}</td><td>${student["Exam Number"]}</td><td style="text-align:left;">${student["STUDENT'S NAME"]}</td><td>${student["Sex"] || '-'}</td><td>${student["SN"] || ''}</td>`;
 
-            const rawScore = student[sub];
-            let grade = '-';
-            if (rawScore !== undefined && rawScore !== null && rawScore.toString().trim() !== '') {
-                 if (rawScore.toUpperCase() === 'N' || rawScore.toUpperCase() === 'X' || rawScore === '-') {
-                     grade = rawScore.toUpperCase() === '-' ? '-' : rawScore.toUpperCase();
+    ALL_SUBJECTS.forEach(sub => {
+        if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][sub]) return;
+
+        const rawScore = student[sub];
+        let grade = '-';
+        if (rawScore !== undefined && rawScore !== null && rawScore.toString().trim() !== '') {
+             if (rawScore.toUpperCase() === 'N' || rawScore.toUpperCase() === 'X' || rawScore === '-') {
+                 grade = rawScore.toUpperCase() === '-' ? '-' : rawScore.toUpperCase();
+            } else {
+                const numericScore = parseInt(rawScore);
+                if (!isNaN(numericScore)) {
+                    const gr = getGradeAndRemark(form, rawScore);
+                    grade = gr.grade;
                 } else {
-                    const numericScore = parseInt(rawScore);
-                    if (!isNaN(numericScore)) {
-                        const gr = getGradeAndRemark(form, rawScore);
-                        grade = gr.grade;
-                    } else {
-                         grade = '-';
-                    }
+                     grade = '-';
                 }
             }
-            rowHtml += `<td>${grade}</td>`;
-        });
-        
-        const metricDisplay = isUpperForm
-            ? (metrics.aggregate !== '-' ? metrics.aggregate : '-')
-            : (metrics.totalScore > 0 ? metrics.totalScore : '-');
+        }
+        rowHtml += `<td>${grade}</td>`;
+    });
+    
+    const isUpperForm = form === 'form3' || form === 'form4';
+    const metricDisplay = isUpperForm
+        ? (metrics.aggregate !== '-' ? metrics.aggregate : '-')
+        : (metrics.totalScore > 0 ? metrics.totalScore : '-');
 
-       rowHtml += `<td>${metricDisplay}</td><td>${metrics.overallRemark}</td></tr>`;
-        html += rowHtml;
+   rowHtml += `<td>${metricDisplay}</td><td>${metrics.overallRemark}</td></tr>`;
+    return rowHtml;
+}
+
+function renderGradeSheetTable(form, isUpperForm, studentsWithMetrics) {
+    const wrapper = document.getElementById('gradesSheetTableWrapper');
+    const finalColHeader = isUpperForm ? 'Aggregate' : 'Total';
+
+    let html = `<table id="gradesTable"><thead><tr><th style="width:5%;">POS</th><th style="width:5%;">Reg</th><th style="width:15%;">Name</th><th style="width:5%;">SEX</th><th style="width:5%;">SNE<br><span style="font-weight:normal;font-size:0.8em;">(SN)</span></th>`;
+    ALL_SUBJECTS.forEach(sub => { 
+        if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][sub]) return;
+        html += `<th>${getSubjectShortName(sub)}</th>`; 
+    });
+    html += `<th>${finalColHeader}</th><th>Remark</th></tr></thead><tbody>`;
+
+    studentsWithMetrics.forEach(item => {
+        html += _buildGradeRowHtml(form, item);
     });
 
     html += '</tbody></table>';
-    wrapper.innerHTML = html;      
+    wrapper.innerHTML = html;
+}
+
+function toggleGradeSort() {
+    if (!_gradeSheetData) return;
+    const btn = document.getElementById('gradeSortToggleBtn');
+    const isPassFail = btn.textContent.includes('Pass');
+
+    if (isPassFail) {
+        // Sort: passed students first (best performance), then failed (worst performance last)
+        const sorted = [..._gradeSheetData.studentsWithMetrics].sort((a, b) => {
+            const aPass = a.metrics.overallRemark === 'Pass';
+            const bPass = b.metrics.overallRemark === 'Pass';
+            if (aPass !== bPass) return aPass ? -1 : 1;
+            // Within same pass/fail group: sort by performance (best first)
+            return a.metrics.overallMetric - b.metrics.overallMetric;
+        });
+        renderGradeSheetTable(_gradeSheetData.form, _gradeSheetData.isUpperForm, sorted);
+        btn.textContent = 'Sort: By Position';
+        btn.style.background = '#2980b9';
+    } else {
+        // Back to default position order
+        const sorted = [..._gradeSheetData.studentsWithMetrics].sort((a, b) => a.student.__numericPosition - b.student.__numericPosition);
+        renderGradeSheetTable(_gradeSheetData.form, _gradeSheetData.isUpperForm, sorted);
+        btn.textContent = 'Sort: Pass \u2192 Fail';
+        btn.style.background = '#e67e22';
+    }
 }
 
 async function displayAnalysisSheet(form) {
@@ -4117,7 +5110,7 @@ async function displayAnalysisSheet(form) {
     }
 
     // Update title with school name and form
-    document.getElementById('analysisTitle').textContent = `CHIMTEKA COMMUNITY DAY SECONDARY SCHOOL - ${form.toUpperCase().replace('FORM', 'Form ')} Class Analysis Report`;
+    document.getElementById('analysisTitle').textContent = `MAGAWA SECONDARY SCHOOL - ${form.toUpperCase().replace('FORM', 'Form ')} Class Analysis Report`;
 
     const isLowerForm = form === 'form1' || form === 'form2';
     // Per-class grade key with fallback to legacy
@@ -4548,7 +5541,7 @@ async function populateDeleteStudentDropdown() {
     sel.innerHTML = '<option value="">-- Select Student --</option>';
     if (!form) return;
 
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const students = await fetchClassData(form);
     if (!students || students.length === 0) return;
 
@@ -4561,7 +5554,7 @@ async function populateDeleteStudentDropdown() {
 }
 
 async function deleteStudentFromList() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('deleteStudentClassSelect').value;
     const studentIndex = document.getElementById('deleteStudentSelect').value;
     const mode = document.getElementById('deleteModeSelect').value;
@@ -4618,15 +5611,16 @@ async function deleteStudentFromList() {
     updateLoadingPercent(10);
 
     try {
+        const commitMessage = mode === 'with'
+            ? `Replaced student ${studentExamNo} with ${document.getElementById('replacementExamNo').value.trim().toUpperCase()} in ${form}`
+            : `Deleted student ${studentExamNo} from ${form}`;
+
         const fileName = `${form}.csv`;
         const currentSha = await getCSVFileSha(form, token);
         updateLoadingPercent(50);
 
         const csvString = Papa.unparse(classData, { header: true, columns: ALL_HEADERS });
-        const base64Content = btoa(unescape(encodeURIComponent(csvString)));
-        const commitMessage = mode === 'with'
-            ? `Replaced student ${studentExamNo} with ${document.getElementById('replacementExamNo').value.trim().toUpperCase()} in ${form}`
-            : `Deleted student ${studentExamNo} from ${form}`;
+        const base64Content = btoa(unescape(encodeURIComponent(csvString))); // UTF-8 fix
 
         const result = await commitFile(fileName, commitMessage, base64Content, currentSha, token, 'PUT');
 
@@ -4875,6 +5869,293 @@ async function generateAllProgressReports() {
     alert('All reports have been generated and sent to your downloads folder.');
 }
 
+// === BATCH PRINT PROGRESS REPORTS (SELECTED STUDENTS) ===
+let _batchPrintClassData = [];
+
+function _batchMsg(msg, isError) {
+    const list = document.getElementById('batchStudentList');
+    const container = document.getElementById('batchPrintSelector');
+    container.style.display = 'block';
+    list.innerHTML = '<p style="padding:15px;text-align:center;color:' + (isError ? '#e74c3c' : '#2c3e50') + ';font-weight:600;">' + msg + '</p>';
+}
+
+async function openBatchPrintSelector() {
+    const form = document.getElementById('progressClassSelect').value;
+    if (!form) {
+        _batchMsg('Please select a Class/Form first.', true);
+        return;
+    }
+
+    try {
+        const data = await fetchClassData(form);
+        if (!data || data.length === 0) {
+            _batchMsg('No student data found for this class.', true);
+            return;
+        }
+
+        _batchPrintClassData = data;
+        const container = document.getElementById('batchPrintSelector');
+        const list = document.getElementById('batchStudentList');
+        container.style.display = 'block';
+        document.getElementById('batchRangeInputs').style.display = 'none';
+
+        let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">';
+        html += '<thead><tr style="background:#ecf0f1;position:sticky;top:0;z-index:1;"><th style="border:1px solid #bbb;padding:5px;text-align:center;width:10%;">#</th><th style="border:1px solid #bbb;padding:5px;text-align:center;width:20%;">Exam No</th><th style="border:1px solid #bbb;padding:5px;text-align:center;width:15%;">Sex</th><th style="border:1px solid #bbb;padding:5px;text-align:center;">Student Name</th></tr></thead><tbody>';
+
+        data.forEach((s, i) => {
+            const bg = i % 2 === 0 ? '#fff' : '#f9f9f9';
+            const examNo = s["Exam Number"] || '';
+            const name = s["STUDENT'S NAME"] || '';
+            const sex = s["Sex"] || '';
+            html += '<tr style="background:' + bg + ';">';
+            html += '<td style="border:1px solid #ddd;padding:4px;text-align:center;"><input type="checkbox" class="batch-student-cb" data-idx="' + i + '" checked style="cursor:pointer;width:16px;height:16px;" /></td>';
+            html += '<td style="border:1px solid #ddd;padding:4px;text-align:center;font-weight:bold;">' + examNo + '</td>';
+            html += '<td style="border:1px solid #ddd;padding:4px;text-align:center;">' + sex + '</td>';
+            html += '<td style="border:1px solid #ddd;padding:4px;text-align:left;">' + name + '</td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        list.innerHTML = html;
+    } catch (err) {
+        console.error('openBatchPrintSelector error:', err);
+        _batchMsg('Failed to load students. Please try again.', true);
+    }
+}
+
+function closeBatchPrintSelector() {
+    document.getElementById('batchPrintSelector').style.display = 'none';
+    _batchPrintClassData = [];
+}
+
+function batchSelectAll() {
+    document.querySelectorAll('.batch-student-cb').forEach(cb => cb.checked = true);
+}
+
+function batchDeselectAll() {
+    document.querySelectorAll('.batch-student-cb').forEach(cb => cb.checked = false);
+}
+
+function batchSelectRange() {
+    const el = document.getElementById('batchRangeInputs');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (el.style.display === 'block') {
+        const total = _batchPrintClassData.length;
+        document.getElementById('batchRangeFrom').max = total;
+        document.getElementById('batchRangeTo').max = total;
+        document.getElementById('batchRangeFrom').placeholder = '1';
+        document.getElementById('batchRangeTo').placeholder = total;
+    }
+}
+
+function applyBatchRange() {
+    const from = parseInt(document.getElementById('batchRangeFrom').value);
+    const to = parseInt(document.getElementById('batchRangeTo').value);
+    const total = _batchPrintClassData.length;
+
+    if (isNaN(from) || isNaN(to) || from < 1 || to < 1 || from > total || to > total) {
+        _batchMsg('Enter valid range between 1 and ' + total + '.', true);
+        return;
+    }
+
+    const start = Math.min(from, to) - 1;
+    const end = Math.max(from, to) - 1;
+
+    document.querySelectorAll('.batch-student-cb').forEach(cb => cb.checked = false);
+    for (let i = start; i <= end; i++) {
+        const cb = document.querySelector('.batch-student-cb[data-idx="' + i + '"]');
+        if (cb) cb.checked = true;
+    }
+}
+
+async function executeBatchPrint() {
+    const checked = document.querySelectorAll('.batch-student-cb:checked');
+    if (checked.length === 0) {
+        _batchMsg('No students selected. Please check at least one student.', true);
+        return;
+    }
+
+    const form = document.getElementById('progressClassSelect').value;
+    const selectedIndices = [];
+    checked.forEach(cb => selectedIndices.push(parseInt(cb.getAttribute('data-idx'))));
+    const selectedData = selectedIndices.map(i => _batchPrintClassData[i]);
+
+    const confirmPrint = confirm('Generate and print ' + selectedData.length + ' progress report(s) for ' + form.toUpperCase() + '?\n\nNote: Your browser may ask for permission to download multiple files. Please allow it.');
+    if (!confirmPrint) return;
+
+    showLoading();
+    const originalLoadingText = document.getElementById('loadingText').textContent;
+
+    if (!currentConfig) await initializeConfig(null);
+
+    // Pre-calculate class-wide subject positions
+    const allData = _batchPrintClassData;
+    const subjectPositions = {};
+    ALL_SUBJECTS.forEach(sub => {
+        subjectPositions[sub] = computeSubjectPositions(form, sub, allData);
+    });
+
+    // Prepare ranking list from ALL students (not just selected)
+    const studentsWithMetrics = [];
+    for (const s of allData) {
+        const metrics = await calculateStudentMetrics(s, form);
+        studentsWithMetrics.push({ examNo: s["Exam Number"], metric: metrics.overallMetric, rankable: metrics.rankable });
+    }
+    let rankableStudents = studentsWithMetrics.filter(s => s.rankable);
+    rankableStudents.sort((a, b) => a.metric - b.metric);
+    const totalRankable = rankableStudents.length;
+
+    // Create or reuse batch print area
+    let batchArea = document.getElementById('batchPrintArea');
+    if (!batchArea) {
+        batchArea = document.createElement('div');
+        batchArea.id = 'batchPrintArea';
+        batchArea.style.display = 'none';
+        document.body.appendChild(batchArea);
+    }
+    batchArea.innerHTML = '';
+
+    const element = document.getElementById('progressReport');
+
+    for (let i = 0; i < selectedData.length; i++) {
+        const student = selectedData[i];
+        const studentNumber = student["Exam Number"];
+
+        const percent = Math.round(((i + 1) / selectedData.length) * 100);
+        updateLoadingPercent(percent);
+        document.getElementById('loadingText').textContent = 'Preparing ' + (i + 1) + ' of ' + selectedData.length + ': ' + student["STUDENT'S NAME"];
+
+        const metrics = await calculateStudentMetrics(student, form);
+        document.getElementById('reportStudentName').textContent = student["STUDENT'S NAME"] || '-';
+        document.getElementById('reportForm').textContent = form.toUpperCase();
+        document.getElementById('reportExamNo').textContent = studentNumber;
+        document.getElementById('reportTerm').textContent = currentConfig.term;
+        document.getElementById('reportYear').textContent = currentConfig.year || '2025';
+        document.getElementById('reportSex').textContent = student["Sex"] || '-';
+
+        const reportBody = document.getElementById('reportBody');
+        reportBody.innerHTML = '';
+
+        let studentWroteAny = false;
+        [...ALL_SUBJECTS].sort().forEach(subject => {
+            if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][subject]) return;
+            const rawScore = student[subject];
+            if (rawScore !== undefined && rawScore !== null && rawScore.toString().trim() !== '') studentWroteAny = true;
+        });
+
+        [...ALL_SUBJECTS].sort().forEach(subject => {
+            if (currentConfig && currentConfig.hiddenSubjects && currentConfig.hiddenSubjects[form] && currentConfig.hiddenSubjects[form][subject]) return;
+            const rawScore = student[subject];
+            let hasScore = rawScore !== undefined && rawScore !== null && rawScore.toString().trim() !== '';
+            const gr = hasScore ? getGradeAndRemark(form, rawScore) : { grade: '', remark: '' };
+            const pos = hasScore ? (subjectPositions[subject][studentNumber] || '') : '';
+            const teacher = hasScore ? (currentConfig.teachers[form][subject] || DEFAULT_TEACHER) : '';
+            const remark = hasScore ? ((form === 'form1' || form === 'form2') ? lowerFormRemarkFromGrade(gr.grade) : gr.remark) : '';
+            const row = reportBody.insertRow();
+            row.insertCell().textContent = subject;
+            row.insertCell().textContent = hasScore ? rawScore : '';
+            row.insertCell().textContent = gr.grade;
+            row.insertCell().textContent = pos;
+            row.insertCell().textContent = remark;
+            row.insertCell().textContent = teacher;
+        });
+
+        const isUpperForm = form === 'form3' || form === 'form4';
+        const lastRow = reportBody.insertRow();
+        const labelCell = lastRow.insertCell();
+        labelCell.style.fontWeight = 'bold';
+        labelCell.textContent = isUpperForm ? 'AGGREGATE' : 'AVERAGE (BEST 6)';
+        if (isUpperForm) {
+            lastRow.insertCell();
+            const aggCell = lastRow.insertCell();
+            aggCell.textContent = metrics.aggregate !== '-' ? metrics.aggregate : '-';
+        } else {
+            const avgCell = lastRow.insertCell();
+            avgCell.textContent = metrics.average > 0 ? metrics.average.toFixed(1) : '-';
+            lastRow.insertCell();
+        }
+        lastRow.insertCell(); lastRow.insertCell(); lastRow.insertCell();
+
+        let overallRank = 'N/A';
+        let positionNum = null;
+        if (metrics.rankable) {
+            const studentMetric = rankableStudents.find(s => s.examNo === studentNumber);
+            if (studentMetric) {
+                const idx = rankableStudents.findIndex(s => s.metric === studentMetric.metric) + 1;
+                positionNum = idx;
+                overallRank = idx;
+            }
+        }
+
+        const summaryDiv = document.getElementById('reportSummary').querySelector('div');
+        if (isUpperForm) {
+            summaryDiv.innerHTML = 'POSITION : <strong><span id="reportPosition">' + overallRank + '</span></strong>&nbsp;&nbsp;&nbsp;&nbsp;OUT OF: <strong><span id="reportTotalStudents">' + totalRankable + '</span></strong>&nbsp;&nbsp;&nbsp;&nbsp;STATUS: <strong><span id="reportStatus">' + computeFinalRemark(form, student) + '</span></strong>';
+        } else {
+            summaryDiv.innerHTML = 'TOTAL SCORES: <strong><span id="reportTotalScores">' + (metrics.totalScore > 0 ? metrics.totalScore : '0') + '</span></strong>&nbsp;&nbsp;&nbsp;&nbsp;POSITION : <strong><span id="reportPosition">' + overallRank + '</span></strong>&nbsp;&nbsp;&nbsp;&nbsp;OUT OF: <strong><span id="reportTotalStudents">' + totalRankable + '</span></strong>&nbsp;&nbsp;&nbsp;&nbsp;STATUS: <strong><span id="reportStatus">' + computeFinalRemark(form, student) + '</span></strong>';
+        }
+
+        document.getElementById('reportPosition').textContent = overallRank;
+        document.getElementById('reportTotalStudents').textContent = totalRankable;
+        document.getElementById('reportStatus').textContent = computeFinalRemark(form, student);
+
+        if (studentWroteAny) {
+            document.getElementById('reportTeacherComment').textContent = generateTeacherComment(form, student, metrics.average, 0, ALL_SUBJECTS.length);
+            document.getElementById('reportHeadComment').textContent = generateHeadComment(form, student, metrics.average, 0, ALL_SUBJECTS.length, positionNum, totalRankable);
+        } else {
+            document.getElementById('reportTeacherComment').textContent = '';
+            document.getElementById('reportHeadComment').textContent = '';
+        }
+
+        document.getElementById('reportNextTerm').textContent = currentConfig.nextTermOpens || '-';
+        document.getElementById('reportFees').textContent = currentConfig.fees || '-';
+        document.getElementById('gradeKeyPlaceholder').innerHTML = getGradeKeyTableHTML(form);
+
+        // Show report, clone it into batch area, then hide again
+        element.style.display = 'block';
+        element.style.position = 'relative';
+        element.style.left = '';
+        const clone = element.cloneNode(true);
+        clone.removeAttribute('id');
+        clone.className = 'progressReportClone';
+        clone.style.display = 'block';
+        clone.style.position = 'relative';
+        clone.style.left = '';
+        batchArea.appendChild(clone);
+        element.style.display = 'none';
+    }
+
+    hideLoading();
+    document.getElementById('loadingText').textContent = originalLoadingText;
+
+    // Hide current page, show batch area, trigger print
+    document.getElementById('sheetsPage').style.display = 'none';
+    document.getElementById('batchPrintSelector').style.display = 'none';
+    batchArea.style.display = 'block';
+
+    // Scale each clone to fit A4 content area (2cm top + 1cm bottom margins)
+    // Using zoom (not transform) because zoom changes actual layout size, which
+    // the print engine uses for page breaking. transform:scale() only changes
+    // visual size and does NOT prevent page overflow.
+    const clones = batchArea.querySelectorAll('.progressReportClone');
+    clones.forEach(function(clone) {
+        var cloneH = clone.offsetHeight;
+        var maxH = 960;
+        if (cloneH > maxH) {
+            var scale = maxH / cloneH;
+            clone.style.zoom = scale;
+        }
+    });
+
+    window.onafterprint = function() {
+        batchArea.style.display = 'none';
+        batchArea.innerHTML = '';
+        document.getElementById('sheetsPage').style.display = 'block';
+        window.onafterprint = null;
+    };
+
+    window.print();
+}
+
 </script>
 
 <script>
@@ -4896,9 +6177,21 @@ async function refreshSubjectMonitor(form) {
     let data = currentClassData[form];
     if (!data || data.length === 0) {
         try {
-            const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${form}.csv`);
-            if (!response.ok) throw new Error("File not found");
-            const csv = await response.text();
+            // FIX: Use authenticated Contents API for private repos
+            const token = getDecryptedToken();
+            let csv;
+            if (token) {
+                const response = await fetch(`${API_BASE}${form}.csv`, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' }
+                });
+                if (!response.ok) throw new Error("File not found");
+                const fileData = await response.json();
+                csv = atob(fileData.content.replace(/\n/g, ''));
+            } else {
+                const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${form}.csv`);
+                if (!response.ok) throw new Error("File not found");
+                csv = await response.text();
+            }
             const parsed = normalizeCSVData(csv);
             data = parsed;
             currentClassData[form] = data; // Cache in memory
@@ -4957,7 +6250,7 @@ async function refreshSubjectMonitor(form) {
 
 // --- SURGICAL FIX: MANUAL STUDENT ENTRY LOGIC ---
 async function addStudentManually() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('manualClassSelect').value;
     const name = document.getElementById('manualStudentName').value.trim();
     const examNo = document.getElementById('manualExamNumber').value.trim().toUpperCase();
@@ -5120,7 +6413,7 @@ function populateGradeEditors() {
                 <td style="border:1px solid #ccc; padding:8px; text-align:center; font-weight:bold;">${grade}</td>
                 <td style="border:1px solid #ccc; padding:8px;">
                     <input type="number" value="${minScore}" style="width:100%; padding:5px; text-align:center; border:1px solid #98FB98;" 
-                    onchange="updateGradeRange('${form}', '${grade}', this.value)">
+                    >
                 </td>
             </tr>
         `;
@@ -5141,37 +6434,90 @@ function populateGradeEditors() {
                 <tbody>${rows}</tbody>
             </table>
         </div>
-        <p style="font-size:0.85em; color:#28a745; text-align:center; margin-top:8px;">Changes auto-save to GitHub and refresh all sheets instantly.</p>
+        <button onclick="saveGradeRanges('${form}')" style="background:#28a745; max-width:250px; margin:15px auto 0 auto; display:block;">Save Grade Ranges</button>
+        <p id="gradeEditorSaveStatus" style="font-size:0.85em; color:#28a745; text-align:center; margin-top:8px;">Click Save to persist changes to GitHub and refresh all sheets.</p>
     `;
 }
 
-async function updateGradeRange(form, gradeKey, newValue) {
-    const val = parseInt(newValue);
-    if (isNaN(val)) {
-        alert('Please enter a valid number for the score range.');
-        populateGradeEditors();
-        return;
-    }
+async function saveGradeRanges(form) {
+    if (!currentConfig) return;
 
+    // Ensure gradeKeys structure exists
     if (!currentConfig.gradeKeys) currentConfig.gradeKeys = {};
     if (!currentConfig.gradeKeys[form]) {
         const isLower = (form === 'form1' || form === 'form2');
         currentConfig.gradeKeys[form] = JSON.parse(JSON.stringify(isLower ? (currentConfig.gradeKeyLower || GRADE_KEY_LOWER) : (currentConfig.gradeKeyUpper || GRADE_KEY_UPPER)));
     }
 
-    currentConfig.gradeKeys[form][gradeKey] = val;
-    console.log(`Grade range updated: ${form} ${gradeKey} = ${val}`);
+    // Read all current input values from the editor table
+    const table = document.getElementById('activeGradeEditor');
+    if (!table) return;
+    const rows = table.querySelectorAll('tbody tr');
+    let hasInvalid = false;
+    rows.forEach(row => {
+        const gradeCell = row.cells[0];
+        const input = row.querySelector('input[type="number"]');
+        if (gradeCell && input) {
+            const val = parseInt(input.value);
+            if (isNaN(val)) {
+                hasInvalid = true;
+                return;
+            }
+            currentConfig.gradeKeys[form][gradeCell.textContent.trim()] = val;
+        }
+    });
 
-    // INSTANT REFRESH: Refresh all visible sheets for ALL classes
-    refreshAllVisibleSheets();
+    if (hasInvalid) {
+        const statusEl = document.getElementById('gradeEditorSaveStatus');
+        if (statusEl) { statusEl.textContent = 'Please enter valid numbers for all score ranges.'; statusEl.style.color = '#e74c3c'; }
+        return;
+    }
 
-    // INSTANT GITHUB SAVE: Fire-and-forget for speed
-    instantSaveGradeConfigToGitHub();
+    try {
+        const statusEl = document.getElementById('gradeEditorSaveStatus');
+        if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = '#f39c12'; }
+
+        // Deep-copy gradeKeys to prevent reference mutation
+        const gradeKeysSnapshot = JSON.parse(JSON.stringify(currentConfig.gradeKeys));
+
+        const saveConfig = {
+            term: currentConfig.term,
+            year: currentConfig.year || '2025',
+            generalComment: currentConfig.generalComment || '',
+            nextTermOpens: currentConfig.nextTermOpens || '',
+            fees: currentConfig.fees || '',
+            gradeKeyLower: currentConfig.gradeKeyLower,
+            gradeKeyUpper: currentConfig.gradeKeyUpper,
+            gradeKeys: gradeKeysSnapshot,
+            teachers: currentConfig.teachers || {},
+            hiddenSubjects: currentConfig.hiddenSubjects || {},
+            locks: currentConfig.locks || {},
+            passwordEnabled: currentConfig.passwordEnabled,
+            sneColumnVisible: currentConfig.sneColumnVisible
+        };
+
+        const jsonContent = JSON.stringify(saveConfig, null, 2);
+        const base64Content = btoa(unescape(encodeURIComponent(jsonContent)));
+        const commitMessage = `Updated grade ranges for ${form}`;
+
+        const result = await commitFile(CONFIG_FILE, commitMessage, base64Content, configSha, getDecryptedToken(), 'PUT');
+
+        if (result) {
+            configSha = result.content.sha;
+            currentConfig = saveConfig;
+            refreshAllVisibleSheets();
+            if (statusEl) { statusEl.textContent = 'Saved successfully. Changes will persist after login.'; statusEl.style.color = '#2ecc71'; }
+        }
+    } catch (error) {
+        console.error('Grade save failed:', error);
+        const statusEl = document.getElementById('gradeEditorSaveStatus');
+        if (statusEl) { statusEl.textContent = 'Save failed. Check Authorization Code.'; statusEl.style.color = '#e74c3c'; }
+    }
 }
 
 async function instantSaveGradeConfigToGitHub() {
-    const token = document.getElementById('githubToken');
-    if (!token || !token.value) {
+    const token = getDecryptedToken();
+    if (!token) {
         console.warn('No token available for instant grade save.');
         return;
     }
@@ -5188,7 +6534,8 @@ async function instantSaveGradeConfigToGitHub() {
             teachers: currentConfig.teachers || {},
             hiddenSubjects: currentConfig.hiddenSubjects || {},
             locks: currentConfig.locks || {},
-            passwordEnabled: currentConfig.passwordEnabled
+            passwordEnabled: currentConfig.passwordEnabled,
+            sneColumnVisible: currentConfig.sneColumnVisible
         };
 
         const jsonContent = JSON.stringify(saveConfig, null, 2);
@@ -5200,13 +6547,13 @@ async function instantSaveGradeConfigToGitHub() {
             commitMessage,
             base64Content,
             configSha,
-            token.value,
+            token,
             'PUT'
         );
 
         if (result) {
             configSha = result.content.sha;
-            console.log('Grade config saved to GitHub instantly.');
+            console.log('Grade config saved to GitHub.');
         }
     } catch (error) {
         console.error('Instant grade save failed (non-blocking):', error);
@@ -5398,7 +6745,7 @@ async function exportGradeSheetWithFilename() {
 
 // --- FUNCTION TO CLEAR SCORES FOR CLASS ---
 async function clearScoresForClass() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('clearScoresClassSelect').value;
     const subject = document.getElementById('clearSubjectSelect').value;
 
@@ -5466,7 +6813,7 @@ async function clearScoresForClass() {
 
 // --- FUNCTION TO OVERWRITE EXISTING STUDENT DATA ---
 async function overwriteStudentData() {
-    const token = document.getElementById('githubToken').value;
+    const token = getDecryptedToken();
     const form = document.getElementById('manualClassSelect').value;
     const name = document.getElementById('manualStudentName').value.trim();
     const examNo = document.getElementById('manualExamNumber').value.trim().toUpperCase();
@@ -5481,7 +6828,7 @@ async function overwriteStudentData() {
 
     try {
         const classData = await fetchClassData(form);
-        updateLoadingPercent(40);
+        updateLoadingPercent(30);
 
         // Find the student by exam number
         const studentIndex = classData.findIndex(s => s["Exam Number"] === examNo);
@@ -5513,12 +6860,12 @@ async function overwriteStudentData() {
         hideLoading();
         if (result) {
             currentDataSha[form] = result.content.sha;
-            alert(`Student ${examNo} updated successfully!`);
             // Clear inputs
             document.getElementById('manualStudentName').value = '';
             document.getElementById('manualExamNumber').value = '';
             document.getElementById('manualSex').value = '';
             document.getElementById('manualDOB').value = '';
+            alert(`Student ${examNo} updated successfully!`);
         }
     } catch (error) {
         hideLoading();
@@ -5526,7 +6873,185 @@ async function overwriteStudentData() {
         alert(`Failed to update student: ${safeMsg(error)}`);
     }
 }
+
+// === EDIT STUDENT NAMES ===
+async function loadEditNamesUI() {
+    const form = document.getElementById('editNamesClassSelect').value;
+    const container = document.getElementById('editNamesContainer');
+    const saveBtn = document.getElementById('saveEditedNamesBtn');
+
+    if (!form) {
+        container.style.display = 'none';
+        saveBtn.style.display = 'none';
+        return;
+    }
+
+    container.innerHTML = '<p style="padding:15px;text-align:center;color:#7f8c8d;">Loading students...</p>';
+    container.style.display = 'block';
+    saveBtn.style.display = 'none';
+
+    try {
+        const classData = await fetchClassData(form);
+
+        if (!classData || classData.length === 0) {
+            container.innerHTML = '<p style="padding:15px;text-align:center;color:#e74c3c;">No students found in this class.</p>';
+            return;
+        }
+
+        let html = '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">';
+        html += '<thead><tr style="background:#ecf0f1;position:sticky;top:0;z-index:1;"><th style="border:1px solid #bbb;padding:6px;text-align:center;width:30%;">Exam No</th><th style="border:1px solid #bbb;padding:6px;text-align:center;width:15%;">Sex</th><th style="border:1px solid #bbb;padding:6px;text-align:center;">Student Name</th></tr></thead><tbody>';
+
+        classData.forEach((student, index) => {
+            const examNo = student["Exam Number"] || '';
+            const name = student["STUDENT'S NAME"] || '';
+            const sex = student["Sex"] || '-';
+            html += `<tr style="background:${index % 2 === 0 ? '#fff' : '#f9f9f9'};">
+                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;font-weight:bold;">${examNo}</td>
+                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><select data-examno-sex="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;text-align:center;"><option value="M"${sex==='M'?' selected':''}>M</option><option value="F"${sex==='F'?' selected':''}>F</option></select></td>
+                <td style="border:1px solid #ddd;padding:4px;"><input type="text" data-examno="${examNo}" value="${name.replace(/"/g, '&quot;')}" style="width:100%;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;" /></td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+        saveBtn.style.display = 'inline-block';
+
+    } catch (error) {
+        container.innerHTML = `<p style="padding:15px;text-align:center;color:#e74c3c;">Failed to load: ${safeMsg(error)}</p>`;
+    }
+}
+
+async function saveEditedNames() {
+    const form = document.getElementById('editNamesClassSelect').value;
+    const token = getDecryptedToken();
+
+    if (!token) { alert('Authorization Code required.'); return; }
+    if (!form) { alert('Please select a class.'); return; }
+
+    const inputs = document.querySelectorAll('#editNamesContainer input[data-examno]');
+    const sexSelects = document.querySelectorAll('#editNamesContainer select[data-examno-sex]');
+    if (inputs.length === 0) { alert('No students to update.'); return; }
+
+    showLoading();
+    updateLoadingPercent(10);
+
+    try {
+        const classData = await fetchClassData(form);
+        updateLoadingPercent(40);
+
+        let changesCount = 0;
+        let sexChangesCount = 0;
+        inputs.forEach(input => {
+            const examNo = input.getAttribute('data-examno');
+            const newName = input.value.trim();
+            if (!newName) return;
+
+            const student = classData.find(s => s["Exam Number"] === examNo);
+            if (student && student["STUDENT'S NAME"] !== newName) {
+                student["STUDENT'S NAME"] = newName;
+                changesCount++;
+            }
+        });
+
+        sexSelects.forEach(sel => {
+            const examNo = sel.getAttribute('data-examno-sex');
+            const newSex = sel.value;
+            const student = classData.find(s => s["Exam Number"] === examNo);
+            if (student && student["Sex"] !== newSex) {
+                student["Sex"] = newSex;
+                sexChangesCount++;
+            }
+        });
+
+        if (changesCount === 0 && sexChangesCount === 0) {
+            hideLoading();
+            alert('No name or sex changes detected.');
+            return;
+        }
+
+        currentClassData[form] = classData;
+        updateLoadingPercent(60);
+
+        const totalChanges = changesCount + sexChangesCount;
+        const commitMessage = `Edited ${totalChanges} student record(s) in ${form}`;
+
+        const fileName = `${form}.csv`;
+        const currentSha = await getCSVFileSha(form, token);
+        updateLoadingPercent(80);
+
+        const csvString = Papa.unparse(classData, { header: true, columns: ALL_HEADERS });
+        const base64Content = btoa(unescape(encodeURIComponent(csvString))); // UTF-8 fix
+
+        const result = await commitFile(fileName, commitMessage, base64Content, currentSha, token, 'PUT');
+
+        hideLoading();
+        if (result) {
+            currentDataSha[form] = result.content.sha;
+            let summaryParts = [];
+            if (changesCount > 0) summaryParts.push(`${changesCount} name(s)`);
+            if (sexChangesCount > 0) summaryParts.push(`${sexChangesCount} sex entry/entries`);
+            alert(`${summaryParts.join(' and ')} updated successfully in ${form.toUpperCase()}!`);
+            loadEditNamesUI();
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('Save edited names failed:', error);
+        alert(`Failed to save name changes: ${safeMsg(error)}`);
+    }
+}
 </script>
+
+<!-- SETUP WIZARD PAGE -->
+<div id="setupWizardPage" class="page" style="max-width:500px;">
+    <h2 style="color:#e67e22;">First-Time Token Setup</h2>
+    <p style="font-size:0.85em; color:#7f8c8d; margin:10px 0 20px 0;">Encrypt your GitHub Personal Access Token with a password. The encrypted token will be embedded in this HTML file.</p>
+    
+    <label for="setupToken">GitHub Personal Access Token</label>
+    <input type="password" id="setupToken" placeholder="ghp_..." style="max-width:400px;">
+    
+    <label for="setupPassword">Choose a Password (for login)</label>
+    <input type="password" id="setupPassword" placeholder="" style="max-width:400px;">
+    
+    <label for="setupPasswordConfirm">Confirm Password</label>
+    <input type="password" id="setupPasswordConfirm" placeholder="" style="max-width:400px;">
+
+    <label for="setupAdminPwd">Setup Protection Password</label>
+    <input type="password" id="setupAdminPwd" placeholder="Password to re-access Setup later" style="max-width:400px;">
+    <p style="font-size:0.75em; color:#999; margin:5px 0 0 0;">This password lets you re-open Setup from the login page to change your token or password. Remember it.</p>
+    
+    <div id="setupError" style="color:#e74c3c; margin-top:10px; font-size:0.9em; display:none;"></div>
+    <div id="setupSuccess" style="color:#27ae60; margin-top:10px; font-size:0.9em; display:none;"></div>
+    
+    <label for="setupEncryptedOutput" id="encryptedOutputLabel" style="display:none; margin-top:15px;">Encrypted Token (copy this)</label>
+    <textarea id="setupEncryptedOutput" readonly placeholder="" style="display:none; max-width:400px; min-height:80px; font-size:0.75em; font-family:monospace; word-break:break-all;"></textarea>
+    
+    <button onclick="runSetupEncrypt()" style="background:#e67e22; margin-top:15px;">Encrypt Token</button>
+    <button onclick="copyEncryptedToken()" id="copyTokenBtn" style="background:#27ae60; display:none; margin-top:5px;">Copy to Clipboard</button>
+    <button onclick="goToPage('adminLoginPage')" style="margin-top:5px;">Back to Login</button>
+    
+    <div style="margin-top:20px; padding:15px; background:#f8f9fa; border-radius:8px; text-align:left; font-size:0.8em; color:#555;">
+        <strong>How it works:</strong>
+        <ol style="margin-top:8px; padding-left:20px;">
+            <li>Enter your GitHub Personal Access Token (starts with ghp_...)</li>
+            <li>Choose a strong password — this becomes your login password</li>
+            <li>Choose a Setup Protection Password — this lets you re-open Setup later to change your token or login password</li>
+            <li>Click "Encrypt Token" — your token gets encrypted and automatically uploaded to your GitHub repo as a <code>.token</code> file</li>
+            <li>You will be taken to the login page automatically</li>
+            <li>From now on, just enter your password to log in — the encrypted token is fetched from GitHub each time</li>
+        </ol>
+        <p style="margin-top:8px; color:#e67e22;"><strong>Note:</strong> Your raw token is NEVER stored anywhere. Only the AES-256-GCM encrypted version lives on GitHub. Without your password, it is useless.</p>
+    </div>
+</div>
+
+<!-- === SUBJECT HIDE/UNHIDE POPUP MODAL === -->
+<div id="subjectHidePopupOverlay" onclick="if(event.target===this)closeHideSubjectPopup()">
+    <div id="subjectHidePopupBox">
+        <h3>Hide / Unhide Subjects</h3>
+        <p id="subjectHidePopupClass"></p>
+        <div id="subjectHideCheckboxList"></div>
+        <button onclick="closeHideSubjectPopup()" style="max-width:200px;">Done</button>
+    </div>
+</div>
 
 </body>
 </html>
