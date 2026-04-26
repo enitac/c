@@ -6676,7 +6676,7 @@ async function shareProgressReportOnWhatsApp() {
             await navigator.share({
                 files: [pdfFile],
                 title: `Progress Report - ${studentName}`,
-                text: `Here is the progress report for ${studentName} from Namitete Secondary School.`
+                text: `Here is the progress report for ${studentName} from Chimteka Secondary School.`
             });
             console.log('Shared via WhatsApp or system share');
         } else {
@@ -6723,7 +6723,7 @@ async function exportMarkSheetWithFilename() {
     const formDisplay = form.toUpperCase().replace('FORM', 'Form ');
     const term = currentConfig ? currentConfig.term : '';
     const year = currentConfig ? (currentConfig.year || '2025') : '2025';
-    const filename = `Namitete_Secondary_${formDisplay}_MarkSheet_Term${term}_${year}`;
+    const filename = `Chimteka_Secondary_${formDisplay}_MarkSheet_Term${term}_${year}`;
     exportToExcel('scoresTable', filename);
 }
 
@@ -6739,7 +6739,7 @@ async function exportGradeSheetWithFilename() {
     const formDisplay = form.toUpperCase().replace('FORM', 'Form ');
     const term = currentConfig ? currentConfig.term : '';
     const year = currentConfig ? (currentConfig.year || '2025') : '2025';
-    const filename = `Namitete_Secondary_${formDisplay}_GradeSheet_Term${term}_${year}`;
+    const filename = `Chimteka_Secondary_${formDisplay}_GradeSheet_Term${term}_${year}`;
     exportToExcel('gradesTable', filename);
 }
 
