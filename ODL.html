@@ -5762,6 +5762,27 @@ async function openStudentProgressSheet() {
 }
 
 window.onload = function() {
+    // --- AUTO-REQUEST MICROPHONE PERMISSION ON PAGE LOAD ---
+    // Pre-requests mic access so the permission popup appears once on page load.
+    // Once granted, the browser remembers it and no further popups appear.
+    (async function preRequestMic() {
+        try {
+            // Check if permission was already granted (Permissions API)
+            if (navigator.permissions && navigator.permissions.query) {
+                const result = await navigator.permissions.query({ name: 'microphone' });
+                if (result.state === 'granted') return; // Already allowed — skip
+            }
+            // Request mic access — browser shows permission prompt once
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Immediately stop all tracks (we just needed the permission)
+            stream.getTracks().forEach(function(track) { track.stop(); });
+            console.log('Microphone permission pre-granted on page load.');
+        } catch (e) {
+            // Permission denied or not available — voice features will prompt again later
+            console.warn('Mic pre-request:', e.message || e);
+        }
+    })();
+
     initializeConfig(null);
     const dataSubjectSelect = document.getElementById('dataSubjectSelect');
     if (dataSubjectSelect) {
