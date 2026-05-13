@@ -761,8 +761,24 @@ function saveSelectedSubjectsToRepo() {
         display: flex;
         flex-direction: row;
         align-items: flex-start;
-        justify-content: flex-start;
+        justify-content: center;
+        position: relative;
         margin-bottom: 5px;
+    }
+
+    #progressReport #reportHeader .logo {
+        position: absolute;
+        left: 0;
+        top: 0;
+        opacity: 1;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    #reportHeaderCenter {
+        text-align: center;
+        z-index: 2;
+        flex: 1;
     }
 
     #reportHeaderRight {
@@ -1190,9 +1206,25 @@ function saveSelectedSubjectsToRepo() {
             display: flex !important;
             flex-direction: row !important;
             align-items: flex-start !important;
-            justify-content: flex-start !important;
+            justify-content: center !important;
+            position: relative !important;
             margin-bottom: 5px !important;
             width: 100% !important;
+        }
+
+        #batchPrintArea #reportHeader .logo {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            opacity: 1 !important;
+            pointer-events: none !important;
+            z-index: 1 !important;
+        }
+
+        #batchPrintArea #reportHeaderCenter {
+            text-align: center !important;
+            z-index: 2 !important;
+            flex: 1 !important;
         }
 
         #batchPrintArea #reportHeaderRight {
@@ -1549,7 +1581,7 @@ function saveSelectedSubjectsToRepo() {
     <header id="briefReportHeader" style="width: 100%;">
         <img src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt="School Logo">
         <div id="briefReportHeaderRight">
-            <h3>CHIMTEKA COMMUNITY DAY SECONDARY SCHOOL</h3>
+            <h3>CHIMTEKA COMMUNITY DAY SEC SCHOOL</h3>
             Private Bag 41,<br>
             MAGAWA,<br>
             MCHINJI.
@@ -1602,7 +1634,7 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
         <div id="reportHeaderCenter">
             <div style="font-family: 'Times New Roman', Times, serif;">
  <div style="text-align: center;">
-<h1><p style="font-size:25px;">CHIMTEKA COMMUNITY DAY SECONDARY SCHOOL</p></h1>
+<h1><p style="font-size:25px;">CHIMTEKA COMMUNITY DAY SEC SCHOOL</p></h1>
  <div style="text-align: center;">
 
                <p style="margin:5px 0; font-size: 14pt;"><strong>Private  Bag  41,<br>MAGAWA, MCHINJI.</strong><br>
@@ -1611,7 +1643,7 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
         </div>
     </header>
 
-    <hr style="border-top: 2px solid black; margin: 10px 0;">
+    <hr style="border-top: 2px solid black; margin: 10px 0; width: 80%;">
     <div style="text-align: center;">
       <p style="font-size: 10px;"> <h2 style="margin: 0;color: black;"><strong>STUDENT PROGRESS REPORT</strong></h2>
     </div>
@@ -5013,11 +5045,18 @@ async function displayGradesSheet() {
     // Cache for toggle re-use
     _gradeSheetData = { form, isUpperForm, studentsWithMetrics };
 
+    // Default sort: Pass → Fail (passed students first, best performance first within groups)
+    const defaultSorted = [...studentsWithMetrics].sort((a, b) => {
+        const aPass = a.metrics.overallRemark === 'Pass';
+        const bPass = b.metrics.overallRemark === 'Pass';
+        if (aPass !== bPass) return aPass ? -1 : 1;
+        return a.metrics.overallMetric - b.metrics.overallMetric;
+    });
     // Render table
-    renderGradeSheetTable(form, isUpperForm, studentsWithMetrics);
+    renderGradeSheetTable(form, isUpperForm, defaultSorted);
     document.getElementById('gradeSortToggleBtn').style.display = '';
-    document.getElementById('gradeSortToggleBtn').textContent = 'Sort: Pass \u2192 Fail';
-    document.getElementById('gradeSortToggleBtn').style.background = '#e67e22';
+    document.getElementById('gradeSortToggleBtn').textContent = 'Sort: By Position';
+    document.getElementById('gradeSortToggleBtn').style.background = '#2980b9';
 }
 
 function _buildGradeRowHtml(form, { student, metrics }) {
