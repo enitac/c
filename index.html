@@ -1,1 +1,1339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chimteka Secondary | Official Portal</title>
+    <!-- Combined Scripts: Tailwind for logic, FontAwesome for icons -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        // ============================================================
+        // AES-256-GCM TOKEN ENCRYPTION SYSTEM
+        // Military-grade encryption for GitHub token storage
+        // ============================================================
 
+        const ENCRYPTED_TOKEN_STORED = 'XrBckpnN+4yL768dotprgu0eiDWBqcZL6qQkJkhV/A8s1vK1OUX9dcTMzi/aHN5Eu/WJ6HMLj2/fRogayRnYF8A74Sd+VVPYn3Asfk5sMGXudV9SeS1/WO8bpemA8XdM70gjTh4gJ0BfkuE+ASa3PJScBD10ME0VA/rOo4FppcQwDNebQKWL99E=';
+
+        // In-memory ONLY — never persisted
+        let _decryptedGitHubToken = null;
+        let _sessionEncryptedToken = null; // Set by setup wizard for current session
+
+        function getDecryptedToken() {
+            return _decryptedGitHubToken;
+        }
+
+        // Derive AES-256-GCM key from password using PBKDF2
+        async function deriveKey(password, salt) {
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                enc.encode(password),
+                'PBKDF2',
+                false,
+                ['deriveKey']
+            );
+            return crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt: salt,
+                    iterations: 600000,
+                    hash: 'SHA-256'
+                },
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        // Encrypt a token with a password → base64 string (salt + iv + ciphertext)
+        async function encryptToken(plainToken, password) {
+            const enc = new TextEncoder();
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const key = await deriveKey(password, salt);
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                enc.encode(plainToken)
+            );
+            // Concatenate: salt(16) + iv(12) + ciphertext
+            const combined = new Uint8Array(salt.length + iv.length + ciphertext.byteLength);
+            combined.set(salt, 0);
+            combined.set(iv, salt.length);
+            combined.set(new Uint8Array(ciphertext), salt.length + iv.length);
+            // Return base64
+            return btoa(String.fromCharCode.apply(null, combined));
+        }
+
+        // Decrypt base64 string → original token using password
+        async function decryptToken(encryptedBase64, password) {
+            const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+            const salt = combined.slice(0, 16);
+            const iv = combined.slice(16, 28);
+            const ciphertext = combined.slice(28);
+            const key = await deriveKey(password, salt);
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                ciphertext
+            );
+            return new TextDecoder().decode(decrypted);
+        }
+
+        // Check if encrypted token has been set up
+        function isTokenSetup() {
+            return ENCRYPTED_TOKEN_STORED !== '__ENCRYPTED_TOKEN_HERE__' || _sessionEncryptedToken !== null;
+        }
+
+        // ============================================================
+
+        // --- Token Decrypt on Admin Login ---
+        async function decryptTokenOnLogin() {
+            if (_decryptedGitHubToken) {
+                updateTokenStatus(true);
+                return;
+            }
+            const password = await showPasswordModal('Enter password to decrypt your token');
+            if (!password) return;
+            if (!isTokenSetup()) {
+                alert('No encrypted token found. Use "First-Time Setup" to configure your token.');
+                return;
+            }
+            try {
+                const encryptedSource = _sessionEncryptedToken || ENCRYPTED_TOKEN_STORED;
+                const token = await decryptToken(encryptedSource, password);
+                _decryptedGitHubToken = token; // Store ONLY in memory
+                updateTokenStatus(true);
+            } catch (e) {
+                console.error('Decryption failed:', e);
+                alert('Incorrect password. Please try again.');
+                updateTokenStatus(false);
+            }
+        }
+
+        function updateTokenStatus(decrypted) {
+            const statusEl = document.getElementById('tokenStatusIndicator');
+            if (statusEl) {
+                statusEl.textContent = decrypted ? 'ACTIVE' : 'INACTIVE';
+                statusEl.className = decrypted
+                    ? 'text-xs font-semibold px-3 py-1.5 rounded-full ' + (window.getComputedStyle(statusEl).display === 'none' ? '' : '')
+                    : 'text-xs font-semibold px-3 py-1.5 rounded-full';
+                statusEl.style.background = decrypted ? '#dcfce7' : '#fef3c7';
+                statusEl.style.color = decrypted ? '#166534' : '#92400e';
+            }
+            const saveBtn = document.getElementById('saveBtn');
+            if (saveBtn) saveBtn.disabled = !decrypted;
+        }
+
+        // --- Setup Wizard Functions ---
+        function openSetupWizard() {
+            document.getElementById('setupToken').value = '';
+            document.getElementById('setupPassword').value = '';
+            document.getElementById('setupPasswordConfirm').value = '';
+            document.getElementById('setupEncryptedOutput').style.display = 'none';
+            document.getElementById('encryptedOutputLabel').style.display = 'none';
+            document.getElementById('copyTokenBtn').style.display = 'none';
+            document.getElementById('setupError').style.display = 'none';
+            document.getElementById('setupSuccess').style.display = 'none';
+            // Hide login page, show setup wizard
+            document.getElementById('adminLogin').classList.remove('active');
+            document.getElementById('setupWizardPage').classList.add('active');
+        }
+
+        async function runSetupEncrypt() {
+            const token = document.getElementById('setupToken').value.trim();
+            const password = document.getElementById('setupPassword').value;
+            const confirm = document.getElementById('setupPasswordConfirm').value;
+            const errorEl = document.getElementById('setupError');
+            const successEl = document.getElementById('setupSuccess');
+
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+
+            if (!token) {
+                errorEl.textContent = 'Please enter your GitHub token.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+                errorEl.textContent = 'Token should start with ghp_ or github_pat_';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            if (!password || password.length < 4) {
+                errorEl.textContent = 'Password must be at least 4 characters.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            if (password !== confirm) {
+                errorEl.textContent = 'Passwords do not match.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                successEl.textContent = 'Encrypting...';
+                successEl.style.display = 'block';
+
+                const encrypted = await encryptToken(token, password);
+
+                _sessionEncryptedToken = encrypted; // Store for current session login
+
+                document.getElementById('setupEncryptedOutput').value = encrypted;
+                document.getElementById('setupEncryptedOutput').style.display = 'block';
+                document.getElementById('encryptedOutputLabel').style.display = 'block';
+                document.getElementById('copyTokenBtn').style.display = 'block';
+
+                successEl.textContent = 'Token encrypted successfully! Click "Copy to Clipboard" below.';
+                successEl.style.display = 'block';
+            } catch (e) {
+                errorEl.textContent = 'Encryption failed: ' + e.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        function copyEncryptedToken() {
+            const output = document.getElementById('setupEncryptedOutput');
+            if (!output.value) {
+                alert('Nothing to copy. Encrypt your token first.');
+                return;
+            }
+            output.select();
+            output.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(output.value).then(() => {
+                const btn = document.getElementById('copyTokenBtn');
+                btn.textContent = 'Copied!';
+                btn.style.background = '#27ae60';
+                setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
+            }).catch(() => {
+                document.execCommand('copy');
+                const btn = document.getElementById('copyTokenBtn');
+                btn.textContent = 'Copied!';
+                setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
+            });
+        }
+
+        function closeSetupWizard() {
+            document.getElementById('setupWizardPage').classList.remove('active');
+            document.getElementById('adminLogin').classList.add('active');
+        }
+
+        // --- CUSTOM PASSWORD MODAL (shows dots for security) ---
+        function showPasswordModal(message) {
+            return new Promise((resolve) => {
+                const existing = document.getElementById('customPasswordModalOverlay');
+                if (existing) existing.remove();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'customPasswordModalOverlay';
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:99999;display:flex;justify-content:center;align-items:center;';
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'background:white;padding:25px 30px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.3);text-align:center;min-width:300px;max-width:400px;font-family:Inter,sans-serif;';
+
+                const msg = document.createElement('p');
+                msg.textContent = message;
+                msg.style.cssText = 'margin-bottom:15px;font-size:14px;color:#2c3e50;font-weight:500;';
+
+                const input = document.createElement('input');
+                input.type = 'password';
+                input.placeholder = 'Enter password';
+                input.style.cssText = 'width:100%;padding:10px 12px;border:2px solid #e2e8f0;border-radius:10px;font-size:14px;text-align:center;box-sizing:border-box;';
+
+                const btnRow = document.createElement('div');
+                btnRow.style.cssText = 'display:flex;gap:10px;margin-top:15px;justify-content:center;';
+
+                const okBtn = document.createElement('button');
+                okBtn.textContent = 'DECRYPT';
+                okBtn.style.cssText = 'padding:10px 25px;background:#1e3a5f;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;width:auto;max-width:none;margin:0;';
+                okBtn.onclick = () => { overlay.remove(); resolve(input.value); };
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.style.cssText = 'padding:10px 25px;background:#e74c3c;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;width:auto;max-width:none;margin:0;';
+                cancelBtn.onclick = () => { overlay.remove(); resolve(null); };
+
+                btnRow.appendChild(okBtn);
+                btnRow.appendChild(cancelBtn);
+                modal.appendChild(msg);
+                modal.appendChild(input);
+                modal.appendChild(btnRow);
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+
+                input.focus();
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { overlay.remove(); resolve(input.value); }
+                    if (e.key === 'Escape') { overlay.remove(); resolve(null); }
+                });
+            });
+        }
+
+        // ============================================================
+
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { 
+                        brandBlue: "#1e3a5f", 
+                        brandOlive: "#5c7c3b", 
+                        portalCream: "#fefdfb",
+                        brandOrange: "#d97706",
+                        brandGold: "#c9a227",
+                        footerDark: "#0f172a",
+                        accent: "#3b82f6",
+                        surface: "#f8fafc",
+                        headerBg: "#1e3a5f"
+                    },
+                    fontFamily: {
+                        'display': ['Playfair Display', 'serif'],
+                        'body': ['Inter', 'sans-serif']
+                    }
+                }
+            }
+        }
+
+        // Surgical Fix: Admin content points to 'c" repo
+        const GITHUB_CONFIG = { owner: "enitac", repo: "c", path: "data/content.json" };
+        let adminContent = {
+            headerTitle: "WELCOME TO THE OFFICIAL STUDENT PORTAL",
+            headerSub: "EST. 1990 | HARDWORK EARNS PROSPERITY",
+            headerImg: "https://raw.githubusercontent.com/ChikumbutsoLubaini/Teacher-Assistant/main/school_building.jpg",
+            announcements: "",
+            aboutText: "",
+            upcoming: "",
+            adverts: [], 
+            noticeBoard: [], 
+            mediaGallery: [] 
+        };
+
+        // --- Navigation Logic ---
+        function showPage(pageId) {
+            // Clear password and decrypted token when navigating away from all admin pages
+            if (pageId !== 'adminPanel' && pageId !== 'adminLogin') {
+                const passEl = document.getElementById('adminPass');
+                if (passEl) passEl.value = '';
+                _decryptedGitHubToken = null; // Clear decrypted token from memory
+                updateTokenStatus(false);
+            }
+            if (pageId === 'adminLogin') {
+                _decryptedGitHubToken = null; // Clear token when going back to login
+                updateTokenStatus(false);
+            }
+            document.getElementById('mainNav').style.display = 'flex';
+            document.getElementById('mainFooter').style.display = 'flex';
+            document.getElementById('portalContainer').classList.remove('active');
+            document.getElementById('welcomeOverlay').classList.remove('active');
+            
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            const target = document.getElementById(pageId);
+            if (target) target.classList.add('active');
+            window.scrollTo(0,0);
+        }
+
+        function openPortal(url) {
+            document.getElementById('mainNav').style.display = 'none';
+            document.getElementById('mainFooter').style.display = 'none';
+            document.getElementById('welcomeOverlay').classList.remove('active');
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById('portalContainer').classList.add('active');
+            document.querySelector('#portalContainer iframe').src = url;
+        }
+
+        // --- Data Logic (Sync with enitac/c) ---
+        async function loadContent() {
+            try {
+                const rawUrl = `https://raw.githubusercontent.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/main/${GITHUB_CONFIG.path}`;
+                const response = await fetch(rawUrl, { cache: 'no-store' });
+                if (response.ok) {
+                    adminContent = await response.json();
+                    updateDisplayContent();
+                    renderAdminLists();
+                    return;
+                }
+            } catch (error) {
+                console.log("Loading local fallback");
+                const local = localStorage.getItem('namiteteAdminContent');
+                if(local) adminContent = JSON.parse(local);
+                updateDisplayContent();
+            }
+        }
+
+        function updateDisplayContent() {
+            document.getElementById('displayHeaderTitle').innerText = adminContent.headerTitle;
+            document.getElementById('displayHeaderSub').innerText = adminContent.headerSub;
+            document.getElementById('heroBanner').style.backgroundImage = `url('${adminContent.headerImg || "https://raw.githubusercontent.com/ChikumbutsoLubaini/Teacher-Assistant/main/school_building.jpg"}')`;
+            
+            document.getElementById('displayAnnouncement').innerText = adminContent.announcements || "No recent announcements.";
+            document.getElementById('displayAboutText').innerText = adminContent.aboutText || "Chimteka Community Secondary School is dedicated to excellence.";
+            document.getElementById('displayUpcoming').innerText = adminContent.upcoming || "No upcoming events scheduled.";
+
+            const renderItems = (items) => (items || []).map(item => `
+                <div class="mb-4 bg-surface rounded-xl p-4 border border-gray-100 hover:shadow-md transition-shadow duration-300">
+                    ${(item.image || item.file) ? `<img src="${item.image || item.file}" class="w-full rounded-lg mb-3 object-cover">` : ''}
+                    <p class="text-sm font-medium text-gray-700">${item.text || item.caption || ''}</p>
+                </div>
+            `).join('');
+
+            document.getElementById('displayAdverts').innerHTML = renderItems(adminContent.adverts);
+            document.getElementById('displayNoticeBoard').innerHTML = renderItems(adminContent.noticeBoard);
+            document.getElementById('galleryDisplay').innerHTML = renderItems(adminContent.mediaGallery);
+        }
+
+        // --- Admin Functions ---
+        async function saveToGithub() {
+            const btn = document.getElementById('saveBtn');
+            const token = getDecryptedToken();
+            if(!token) return alert("Decrypt your token first (click 'Enter Password to Decrypt Token')");
+
+            btn.disabled = true;
+            btn.innerHTML = "SAVING...";
+
+            try {
+                adminContent.headerTitle = document.getElementById('adminHeaderTitle').value;
+                adminContent.headerSub = document.getElementById('adminHeaderSub').value;
+
+                const headerImgFile = document.getElementById('adminHeaderImgFile');
+                if (headerImgFile.files && headerImgFile.files[0]) {
+                    const headerImgData = await new Promise(r => {
+                        const fr = new FileReader();
+                        fr.onload = e => r(e.target.result);
+                        fr.readAsDataURL(headerImgFile.files[0]);
+                    });
+                    adminContent.headerImg = headerImgData;
+                }
+
+                adminContent.announcements = document.getElementById('adminAnnounceInput').value;
+                adminContent.aboutText = document.getElementById('adminAboutInput').value;
+                adminContent.upcoming = document.getElementById('adminUpcomingInput').value;
+
+                const url = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}`;
+                let sha = "";
+                const checkRes = await fetch(url, { headers: { 'Authorization': `token ${token}` } });
+                if (checkRes.ok) { const d = await checkRes.json(); sha = d.sha; }
+
+                const finalJson = JSON.stringify(adminContent);
+                const base64Content = btoa(unescape(encodeURIComponent(finalJson)));
+
+                const syncRes = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `token ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: "Update Portal Content", content: base64Content, sha: sha })
+                });
+
+                if (syncRes.ok) {
+                    alert("Changes Published Successfully!");
+                    localStorage.setItem('enitacAdminContent', finalJson);
+                    updateDisplayContent();
+                }
+            } catch (err) {
+                alert("Error saving: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = "PUBLISH ALL CHANGES";
+            }
+        }
+
+        async function addItem(type) {
+            const textInput = document.getElementById(`admin${type}Text`);
+            const fileInput = document.getElementById(`admin${type}File`);
+            let imgData = "";
+            
+            if (fileInput.files && fileInput.files[0]) {
+                const reader = new FileReader();
+                imgData = await new Promise(r => {
+                    reader.onload = e => r(e.target.result);
+                    reader.readAsDataURL(fileInput.files[0]);
+                });
+            }
+            
+            const newItem = { text: textInput.value, image: imgData };
+            if(!adminContent[type]) adminContent[type] = [];
+            adminContent[type].push(newItem);
+            renderAdminLists();
+            textInput.value = "";
+        }
+
+        function deleteItem(type, index) {
+            adminContent[type].splice(index, 1);
+            renderAdminLists();
+        }
+
+        function renderAdminLists() {
+            ['adverts', 'noticeBoard', 'mediaGallery'].forEach(type => {
+                const el = document.getElementById(`admin${type}List`);
+                if(el) el.innerHTML = (adminContent[type] || []).map((item, idx) => `
+                    <div class="flex justify-between text-xs p-3 bg-red-50 rounded-lg mb-2 border border-red-100">
+                        <span class="text-gray-700">${item.text || 'Item'}</span>
+                        <button onclick="deleteItem('${type}', ${idx})" class="text-red-500 hover:text-red-700 font-semibold px-2">REMOVE</button>
+                    </div>
+                `).join('');
+            });
+        }
+
+        function previewHeaderImg() {
+            const fileInput = document.getElementById('adminHeaderImgFile');
+            if (fileInput.files && fileInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    document.getElementById('adminHeaderImgThumb').src = e.target.result;
+                    document.getElementById('adminHeaderImgPreview').style.display = 'block';
+                    document.getElementById('adminHeaderImgDeleteBtn').style.display = 'inline';
+                };
+                reader.readAsDataURL(fileInput.files[0]);
+            }
+        }
+
+        function deleteHeaderImg() {
+            adminContent.headerImg = '';
+            document.getElementById('adminHeaderImgFile').value = '';
+            document.getElementById('adminHeaderImgPreview').style.display = 'none';
+            document.getElementById('adminHeaderImgDeleteBtn').style.display = 'none';
+            document.getElementById('adminHeaderImgThumb').src = '';
+            updateDisplayContent();
+        }
+
+        async function authenticateAdmin() {
+            const password = document.getElementById('adminPass').value;
+            if (!password) {
+                alert('Please enter your password.');
+                return;
+            }
+            if (!isTokenSetup()) {
+                alert('No encrypted token found. Click "First-Time Setup" below to configure your token and password.');
+                return;
+            }
+            try {
+                const encryptedSource = _sessionEncryptedToken || ENCRYPTED_TOKEN_STORED;
+                const token = await decryptToken(encryptedSource, password);
+                _decryptedGitHubToken = token; // Store ONLY in memory
+                showPage('adminPanel');
+                document.getElementById('adminHeaderTitle').value = adminContent.headerTitle;
+                document.getElementById('adminHeaderSub').value = adminContent.headerSub;
+                document.getElementById('adminAboutInput').value = adminContent.aboutText;
+                document.getElementById('adminAnnounceInput').value = adminContent.announcements;
+                document.getElementById('adminUpcomingInput').value = adminContent.upcoming;
+                if (adminContent.headerImg) {
+                    document.getElementById('adminHeaderImgThumb').src = adminContent.headerImg;
+                    document.getElementById('adminHeaderImgPreview').style.display = 'block';
+                    document.getElementById('adminHeaderImgDeleteBtn').style.display = 'inline';
+                } else {
+                    document.getElementById('adminHeaderImgPreview').style.display = 'none';
+                    document.getElementById('adminHeaderImgDeleteBtn').style.display = 'none';
+                }
+                document.getElementById('adminHeaderImgFile').value = '';
+                renderAdminLists();
+                updateTokenStatus(true);
+            } catch (e) {
+                console.error('Decryption failed:', e);
+                alert('Incorrect password. Please try again.');
+            }
+        }
+
+        function toggleMobileMenu() {
+            document.getElementById('mobileMenu').classList.toggle('hidden');
+        }
+
+        // Hide First-Time Setup button if token already configured
+        document.addEventListener('DOMContentLoaded', function() {
+            loadContent();
+            if (isTokenSetup()) {
+                const btn = document.getElementById('firstTimeSetupBtn');
+                if (btn) btn.style.display = 'none';
+            }
+        });
+
+        // Also hide setup button immediately after setup wizard completes encryption
+        const _origRunSetupEncrypt = runSetupEncrypt;
+        runSetupEncrypt = async function() {
+            await _origRunSetupEncrypt();
+            if (_sessionEncryptedToken) {
+                const btn = document.getElementById('firstTimeSetupBtn');
+                if (btn) btn.style.display = 'none';
+            }
+        };
+
+    </script>
+
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        
+        .page { display: none; }
+        .page.active { display: block; }
+        
+        .hero-banner {
+            height: 520px;
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+        
+        .hero-banner::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(135deg, rgba(30, 58, 95, 0.12) 0%, rgba(15, 23, 42, 0.08) 100%);
+        }
+
+        .hero-banner::after {
+            content: "";
+            position: absolute;
+            bottom: 0; left: 0; width: 100%; height: 150px;
+            background: linear-gradient(to top, rgba(248, 250, 252, 1), transparent);
+        }
+        
+        .portal-wrapper {
+            background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+            padding-bottom: 80px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .main-card {
+            background: linear-gradient(145deg, #ffffff, #f8fafc);
+            width: 92%;
+            max-width: 1200px;
+            margin-top: -100px;
+            padding: 50px;
+            border-radius: 24px;
+            box-shadow: 
+                0 25px 50px -12px rgba(0, 0, 0, 0.15),
+                0 0 0 1px rgba(255, 255, 255, 0.5);
+            z-index: 10;
+            position: relative;
+        }
+
+        .main-card::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #1e3a5f, #5c7c3b, #d97706);
+            border-radius: 24px 24px 0 0;
+        }
+
+        .action-btn {
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn::before {
+            content: "";
+            position: absolute;
+            top: 0; left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .action-btn:hover::before {
+            left: 100%;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.3);
+        }
+
+        .section-title {
+            position: relative;
+            display: inline-block;
+        }
+
+        .section-title::after {
+            content: "";
+            position: absolute;
+            bottom: -8px;
+            left: 0;
+            width: 40px;
+            height: 3px;
+            background: linear-gradient(90deg, #1e3a5f, #3b82f6);
+            border-radius: 2px;
+        }
+
+        .info-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+
+        .info-card:hover {
+            box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.1);
+            border-color: #cbd5e1;
+        }
+
+        iframe { width: 100%; height: calc(100vh - 60px); border: none; }
+        
+        #portalContainer.active { 
+            display: block; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100vh; 
+            background: white; 
+            z-index: 1000; 
+        }
+        
+        .admin-input { 
+            border: 2px solid #e2e8f0; 
+            padding: 12px 16px; 
+            border-radius: 10px; 
+            width: 100%; 
+            margin-bottom: 12px; 
+            font-size: 14px;
+            transition: all 0.2s ease;
+            background: #fafafa;
+        }
+
+        .admin-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .nav-link {
+            position: relative;
+            padding: 8px 0;
+        }
+
+        .nav-link::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: #ffffff;
+            transition: width 0.3s ease;
+        }
+
+        .nav-link:hover::after {
+            width: 100%;
+        }
+
+        .decorative-pattern {
+            background-image: radial-gradient(circle at 1px 1px, rgba(30, 58, 95, 0.05) 1px, transparent 0);
+            background-size: 40px 40px;
+        }
+
+        /* Welcome Modal Styles */
+        .welcome-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+            z-index: 999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .welcome-overlay.active {
+            display: flex;
+        }
+
+        .welcome-content {
+            text-align: center;
+            color: white;
+            max-width: 600px;
+            padding: 40px;
+        }
+
+        .welcome-content h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .welcome-content p {
+            font-size: 1.1rem;
+            opacity: 0.8;
+            margin-bottom: 2rem;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-in {
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        /* Help Modal Content Styles */
+        #helpModal .prose h3 {
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+        }
+
+        #helpModal .prose p,
+        #helpModal .prose li {
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+
+        #helpModal .prose ul {
+            margin-bottom: 0.75rem;
+        }
+
+        #helpModal .prose li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* Mobile Menu Dropdown */
+        #mobileMenu.hidden { display: none; }
+
+        /* Mobile Responsive Fixes */
+        @media (max-width: 768px) {
+            /* Fix Get Started button overlap */
+            .hero-banner {
+                height: auto;
+                min-height: 480px;
+                padding-bottom: 120px;
+            }
+
+            .hero-banner .relative.z-10 {
+                padding-bottom: 20px;
+            }
+
+            .main-card {
+                margin-top: -60px;
+                padding: 24px 16px;
+                width: 96%;
+                border-radius: 20px;
+            }
+
+            /* Fix cards spacing on mobile */
+            .info-card {
+                padding: 20px 16px;
+                margin-bottom: 16px;
+            }
+
+            .info-card h3 {
+                font-size: 0.8rem;
+                margin-bottom: 12px;
+            }
+
+            .info-card p {
+                font-size: 0.875rem;
+                line-height: 1.6;
+            }
+
+            .space-y-8 > * + * {
+                margin-top: 1rem;
+            }
+
+            /* Footer bottom bar center alignment */
+            footer .border-t {
+                flex-direction: column;
+                text-align: center;
+                gap: 12px;
+            }
+
+            footer .border-t p,
+            footer .border-t button {
+                text-align: center;
+                justify-content: center;
+            }
+
+            /* Fix contact section alignment on mobile */
+            footer .text-right {
+                text-align: center;
+                margin-top: 24px;
+            }
+
+            footer .text-right .flex {
+                justify-content: center;
+            }
+        }
+    </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body class="bg-surface decorative-pattern">
+
+    <!-- Header Navigation - Now with brandBlue background -->
+    <header id="mainNav" class="bg-headerBg px-[5%] py-4 flex justify-between items-center sticky top-0 z-50 shadow-lg">
+        <div class="flex flex-col">
+            <h1 class="text-2xl font-display font-bold tracking-tight leading-none text-white">CHIMTEKA</h1>
+            <p class="text-[10px] font-semibold text-white/70 tracking-[0.2em] uppercase">Secondary School</p>
+        </div>
+        <nav class="hidden md:flex items-center space-x-8 text-sm font-semibold uppercase tracking-wide">
+            <button onclick="showPage('homePage')" class="nav-link text-white/90 hover:text-white transition-colors">Home</button>
+            <button onclick="showWelcome()" class="nav-link text-white/90 hover:text-white transition-colors">Student Portal</button>
+            <button onclick="showPage('adminLogin')" class="bg-white text-brandBlue px-6 py-2.5 rounded-full hover:bg-gray-100 transition-all hover:shadow-lg">Admin Login</button>
+        </nav>
+        <!-- Mobile Menu Button -->
+        <button onclick="toggleMobileMenu()" class="md:hidden text-white p-2">
+            <i class="fas fa-bars text-xl"></i>
+        </button>
+    </header>
+    <!-- Mobile Menu Dropdown -->
+    <div id="mobileMenu" class="hidden md:hidden bg-headerBg px-[5%] py-4 border-t border-white/10">
+        <div class="flex flex-col space-y-3 text-sm font-semibold uppercase tracking-wide">
+            <button onclick="showPage('homePage'); toggleMobileMenu();" class="nav-link text-left text-white/90 hover:text-white transition-colors py-2">Home</button>
+            <button onclick="showWelcome(); toggleMobileMenu();" class="nav-link text-left text-white/90 hover:text-white transition-colors py-2">Student Portal</button>
+            <button onclick="showPage('adminLogin'); toggleMobileMenu();" class="bg-white text-brandBlue px-6 py-2.5 rounded-full hover:bg-gray-100 transition-all hover:shadow-lg text-center">Admin Login</button>
+        </div>
+    </div>
+
+    <main>
+        <!-- Home Page -->
+        <div id="homePage" class="page active">
+            <!-- Hero Section -->
+            <div class="hero-banner" id="heroBanner">
+                <div class="relative z-10 text-white text-center mt-24 px-6 max-w-4xl">
+                    <div class="inline-block mb-6 px-4 py-1.5 bg-white/10 backdrop-blur-sm rounded-full border border-white/20">
+                        <span class="text-xs font-medium tracking-widest uppercase text-white/90">Established 1998</span>
+                    </div>
+                    <h2 id="displayHeaderTitle" class="font-display text-4xl md:text-6xl font-bold drop-shadow-lg leading-tight">
+                        WELCOME TO THE OFFICIAL STUDENT PORTAL
+                    </h2>
+                    <p id="displayHeaderSub" class="mt-4 text-base md:text-lg font-medium text-white/80 tracking-wide">
+                        EST. 1998 | HARDWORK EARNS PROSPERITY
+                    </p>
+                    <div class="mt-8 flex justify-center gap-4">
+                        <button onclick="showWelcome()" class="bg-white text-brandBlue px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-all hover:shadow-xl">
+                            <i class="fas fa-arrow-right mr-2"></i> Get Started/Yambani
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Overlapping Main Card -->
+            <div class="portal-wrapper">
+                <div class="main-card">
+                    <!-- Information Grid -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <!-- Column 1: About & Announcements -->
+                        <div class="space-y-8">
+                            <div class="info-card">
+                                <h3 class="section-title text-sm font-bold uppercase tracking-widest text-brandBlue mb-6">About Our School</h3>
+                                <p id="displayAboutText" class="text-gray-600 leading-relaxed text-sm"></p>
+                            </div>
+                            
+                            <div class="info-card bg-gradient-to-br from-blue-50 to-white border-blue-100">
+                                <div class="flex items-center gap-3 mb-4">
+                                    <div class="w-10 h-10 bg-brandBlue/10 rounded-lg flex items-center justify-center">
+                                        <i class="fas fa-bullhorn text-brandBlue"></i>
+                                    </div>
+                                    <h3 class="text-sm font-bold uppercase tracking-widest text-brandBlue">Latest Announcements</h3>
+                                </div>
+                                <p id="displayAnnouncement" class="text-gray-600 text-sm italic"></p>
+                            </div>
+                        </div>
+
+                        <!-- Column 2: Notice Board & Events -->
+                        <div class="space-y-8">
+                            <div class="info-card">
+                                <div class="flex items-center gap-3 mb-6">
+                                    <div class="w-10 h-10 bg-brandOlive/10 rounded-lg flex items-center justify-center">
+                                        <i class="fas fa-thumbtack text-brandOlive"></i>
+                                    </div>
+                                    <h3 class="section-title text-sm font-bold uppercase tracking-widest text-brandOlive">Notice Board</h3>
+                                </div>
+                                <div id="displayNoticeBoard" class="space-y-4"></div>
+                            </div>
+                            
+                            <div class="info-card bg-gradient-to-br from-amber-50 to-white border-amber-100">
+                                <div class="flex items-center gap-3 mb-4">
+                                    <div class="w-10 h-10 bg-brandOrange/10 rounded-lg flex items-center justify-center">
+                                        <i class="fas fa-calendar-alt text-brandOrange"></i>
+                                    </div>
+                                    <h3 class="text-sm font-bold uppercase tracking-widest text-brandOrange">Upcoming Events</h3>
+                                </div>
+                                <p id="displayUpcoming" class="text-gray-700 text-sm font-medium"></p>
+                            </div>
+                        </div>
+
+                        <!-- Column 3: Gallery & Adverts -->
+                        <div class="space-y-8">
+                            <div class="info-card">
+                                <div class="flex items-center gap-3 mb-6">
+                                    <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center">
+                                        <i class="fas fa-images text-accent"></i>
+                                    </div>
+                                    <h3 class="section-title text-sm font-bold uppercase tracking-widest text-accent">Media Gallery</h3>
+                                </div>
+                                <div id="galleryDisplay" class="grid grid-cols-1 gap-4"></div>
+                            </div>
+                            
+                            <div class="info-card bg-gradient-to-br from-purple-50 to-white border-purple-100">
+                                <div class="flex items-center gap-3 mb-4">
+                                    <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                                        <i class="fas fa-ad text-purple-600"></i>
+                                    </div>
+                                    <h3 class="text-sm font-bold uppercase tracking-widest text-purple-600">Adverts</h3>
+                                </div>
+                                <div id="displayAdverts"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admin Login (Password: 0) - Centered Modal Style -->
+        <div id="adminLogin" class="page">
+            <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 px-6 py-12">
+                <div class="max-w-md w-full">
+                    <div class="bg-white p-10 rounded-3xl shadow-2xl border border-gray-100 text-center relative overflow-hidden">
+                        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-brandBlue via-brandOlive to-brandOrange"></div>
+                        <div class="w-20 h-20 bg-brandBlue/10 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                            <i class="fas fa-user-shield text-3xl text-brandBlue"></i>
+                        </div>
+                        <h2 class="text-2xl font-display font-bold mb-2 text-brandBlue">Admin Access</h2>
+                        <p class="text-gray-500 text-sm mb-8">Enter your credentials to continue</p>
+                        <input type="password" id="adminPass" placeholder="Enter Password" class="admin-input text-center text-lg tracking-widest">
+                        <button onclick="authenticateAdmin()" class="w-full bg-brandBlue text-white py-4 rounded-xl font-bold hover:bg-brandBlue/90 transition-all mt-4 shadow-lg shadow-brandBlue/20 hover:shadow-xl hover:shadow-brandBlue/30">
+                            <i class="fas fa-lock-open mr-2"></i> LOG IN
+                        </button>
+                        <button id="firstTimeSetupBtn" onclick="openSetupWizard()" class="w-full bg-orange-500 text-white py-4 rounded-xl font-bold hover:bg-orange-600 transition-all mt-3 shadow-lg shadow-orange-500/20 hover:shadow-xl hover:shadow-orange-500/30">
+                            <i class="fas fa-cog mr-2"></i> First-Time Setup
+                        </button>
+                        <button onclick="showPage('homePage')" class="mt-4 text-gray-400 text-sm hover:text-gray-600 transition-colors">
+                            <i class="fas fa-arrow-left mr-1"></i> Back to Home
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admin Panel (Syncs with enitac/n) -->
+        <div id="adminPanel" class="page py-10 px-6 min-h-screen bg-surface">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex justify-between items-center mb-10">
+                    <div>
+                        <h2 class="text-3xl font-display font-bold text-brandBlue">Content Editor</h2>
+                        <p class="text-gray-500 text-sm mt-1">____________________</p>
+                    </div>
+                    <button onclick="showPage('homePage')" class="flex items-center gap-2 text-gray-500 font-semibold hover:text-brandBlue transition-colors">
+                        <i class="fas fa-arrow-left"></i> Back
+                    </button>
+                </div>
+
+                <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 mb-8 relative overflow-hidden">
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-green-400 to-emerald-500"></div>
+                    <div class="flex flex-col md:flex-row gap-4 items-end">
+                        <div class="flex-1">
+                            <label class="text-xs font-bold text-red-600 block mb-2 uppercase tracking-wider">
+                                <i class="fas fa-lock mr-1"></i> READY
+                            </label>
+                            <div class="flex flex-wrap items-center gap-3 mb-2">
+                                <span id="tokenStatusIndicator" class="text-xs font-semibold px-3 py-1.5 rounded-full" style="background:#dcfce7;color:#166534;">  </span>
+                            </div>
+                        </div>
+                        <button id="saveBtn" onclick="saveToGithub()" class="w-full md:w-auto bg-gradient-to-r from-green-500 to-emerald-600 text-white px-8 py-4 rounded-xl font-bold text-lg hover:shadow-lg hover:shadow-green-500/25 transition-all">
+                            <i class="fas fa-cloud-upload-alt mr-2"></i> SAVE ALL CHANGES
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                        <h3 class="font-bold mb-6 pb-3 border-b border-gray-100 text-sm uppercase tracking-widest text-gray-700 flex items-center gap-2">
+                            <i class="fas fa-edit text-brandBlue"></i> General Content
+                        </h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Hero Title</label>
+                                <input type="text" id="adminHeaderTitle" class="admin-input">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Hero Subtitle</label>
+                                <input type="text" id="adminHeaderSub" class="admin-input">
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Hero Background Image</label>
+                                <div id="adminHeaderImgPreview" class="mb-3 rounded-xl overflow-hidden border border-gray-200" style="display:none; max-height:200px;"><img id="adminHeaderImgThumb" src="" class="w-full object-cover" style="max-height:200px;"></div>
+                                <input type="file" id="adminHeaderImgFile" accept="image/*" class="text-xs mb-2 block text-gray-500" onchange="previewHeaderImg()">
+                                <button type="button" id="adminHeaderImgDeleteBtn" onclick="deleteHeaderImg()" class="text-xs text-red-500 hover:text-red-700 font-semibold" style="display:none;"><i class="fas fa-trash-alt mr-1"></i> Remove Background Image</button>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">About Us Text</label>
+                                <textarea id="adminAboutInput" class="admin-input h-32 resize-none"></textarea>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Announcements</label>
+                                <textarea id="adminAnnounceInput" class="admin-input h-24 resize-none"></textarea>
+                            </div>
+                            <div>
+                                <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Upcoming Events</label>
+                                <textarea id="adminUpcomingInput" class="admin-input h-24 resize-none"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-6">
+                        <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+                            <h3 class="font-bold mb-6 pb-3 border-b border-gray-100 text-sm uppercase tracking-widest text-gray-700 flex items-center gap-2">
+                                <i class="fas fa-thumbtack text-brandOlive"></i> Notice Board / Gallery
+                            </h3>
+                            <div class="space-y-6">
+                                <div class="bg-surface p-4 rounded-xl">
+                                    <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Add Notice</label>
+                                    <input type="text" id="adminnoticeBoardText" placeholder="Notice Headline" class="admin-input">
+                                    <input type="file" id="adminnoticeBoardFile" class="text-xs mb-3 block text-gray-500">
+                                    <button onclick="addItem('noticeBoard')" class="bg-brandBlue text-white px-5 py-2 text-sm rounded-lg font-semibold hover:bg-brandBlue/90 transition-colors">
+                                        <i class="fas fa-plus mr-1"></i> Add Notice
+                                    </button>
+                                    <div id="adminnoticeBoardList" class="mt-4 max-h-40 overflow-y-auto"></div>
+                                </div>
+                                
+                                <div class="bg-surface p-4 rounded-xl">
+                                    <label class="text-xs font-bold block mb-2 uppercase tracking-wider text-gray-600">Add to Gallery</label>
+                                    <input type="text" id="adminmediaGalleryText" placeholder="Gallery Caption" class="admin-input">
+                                    <input type="file" id="adminmediaGalleryFile" class="text-xs mb-3 block text-gray-500">
+                                    <button onclick="addItem('mediaGallery')" class="bg-brandOlive text-white px-5 py-2 text-sm rounded-lg font-semibold hover:bg-brandOlive/90 transition-colors">
+                                        <i class="fas fa-plus mr-1"></i> Add to Gallery
+                                    </button>
+                                    <div id="adminmediaGalleryList" class="mt-4 max-h-40 overflow-y-auto"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Welcome Overlay (Blue Background with Exam Buttons) -->
+    <div id="welcomeOverlay" class="welcome-overlay">
+        <div class="welcome-content">
+            <div class="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-8">
+                <i class="fas fa-graduation-cap text-5xl text-white"></i>
+            </div>
+            <h2>Welcome to Chimteka</h2>
+            <p>Your journey to academic excellence begins here. Select an exam portal to continue.</p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center mt-8">
+                <button onclick="openPortal('https://enitac.github.io/c/DAY.html')" class="action-btn bg-brandBlue text-white px-5 py-3 rounded-xl font-semibold hover:bg-brandBlue/90 transition-all shadow-lg shadow-brandBlue/20 flex items-center justify-center gap-2">
+                    <div class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-calendar-check"></i>
+                    </div>
+                    EXAMS DAY
+                </button>
+                <button onclick="openPortal('https://enitac.github.io/c/ODL.html')" class="action-btn bg-brandOlive text-white px-5 py-3 rounded-xl font-semibold hover:bg-brandOlive/90 transition-all shadow-lg shadow-brandOlive/20 flex items-center justify-center gap-2">
+                    <div class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                        <i class="fas fa-desktop"></i>
+                    </div>
+                    EXAMS ODL
+                </button>
+            </div>
+            <button onclick="closeWelcome()" class="mt-6 text-white/60 hover:text-white transition-colors text-sm">
+                <i class="fas fa-arrow-left mr-1"></i> Back to Home
+            </button>
+        </div>
+    </div>
+
+    <!-- Portal Container (Iframe Overlay) -->
+    <div id="portalContainer" class="hidden">
+        <div class="bg-brandBlue p-4 flex justify-between items-center text-white shadow-lg">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-school"></i>
+                </div>
+                <span class="font-bold text-sm uppercase tracking-widest">CHIMTEKA OFFICIAL PORTAL</span>
+            </div>
+            <button onclick="showPage('homePage')" class="bg-red-500 hover:bg-red-600 px-5 py-2 rounded-lg font-bold text-sm transition-colors flex items-center gap-2">
+                <i class="fas fa-times"></i> EXIT PORTAL
+            </button>
+        </div>
+        <iframe src=""></iframe>
+    </div>
+
+    <!-- Footer -->
+    <footer id="mainFooter" class="bg-footerDark text-gray-400 py-8 px-[5%]">
+        <div class="w-full">
+            <div class="flex flex-col md:flex-row justify-between items-start w-full">
+                <div class="shrink-0">
+                    <h3 class="text-2xl font-display font-bold text-white mb-3">Chimteka Community Secondary School</h3>
+                    <p class="text-gray-500 text-sm">Hardwork earns prosperity 1998</p>
+                    <div class="flex gap-4 mt-6">
+                        <a href="#" class="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors">
+                            <i class="fab fa-facebook-f text-white"></i>
+                        </a>
+                        <a href="#" class="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors">
+                            <i class="fab fa-twitter text-white"></i>
+                        </a>
+                        <a href="#" class="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors">
+                            <i class="fab fa-instagram text-white"></i>
+                        </a>
+                    </div>
+                </div>
+                <div class="text-right shrink-0">
+                    <p class="text-white font-semibold uppercase tracking-widest text-sm mb-4">Contact Office</p>
+                    <div class="space-y-2 text-sm">
+                        <p class="flex items-center justify-end gap-2">
+                            <span><span class="text-brandOrange font-semibold">📞 +265 999 38 85 320</span>
+                        </p>
+                        <p class="flex items-center justify-end gap-2">
+                            <span>✉️ chimtekacdss713@gmail.com</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="border-t border-gray-800 mt-6 pt-6 flex flex-col md:flex-row justify-between items-center w-full text-center md:text-left">
+                <p class="text-gray-500 text-sm shrink-0 w-full md:w-auto">© 2026 All Rights Reserved.</p>
+                <button onclick="showHelpModal()" class="text-brandOrange font-semibold hover:text-brandOrange/80 transition-colors text-sm flex items-center gap-2 justify-center md:justify-start">
+                    <i class="fas fa-question-circle"></i> Help
+                </button>
+                <p class="text-sm shrink-0 w-full md:w-auto">Designed by <span class="text-brandOrange font-semibold">CHIKUMBUTSO LUBAINI-0994 03 93 25</span></p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="fixed inset-0 bg-black/70 z-[1000] hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+            <div class="bg-brandBlue p-6 flex justify-between items-center">
+                <h2 class="text-2xl font-display font-bold text-white">📚 Portal User Manual</h2>
+                <button onclick="closeHelpModal()" class="text-white/80 hover:text-white transition-colors">
+                    <i class="fas fa-times text-2xl"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
+                <div class="prose prose-sm max-w-none text-gray-700">
+                    <h3 class="text-lg font-bold text-brandBlue mb-3">1. Chimteka Secondary Portal (Front Page)</h3>
+                    <p class="mb-4">The front page is designed for students, parents, guardians and sponsors to access exam results quickly.</p>
+                    <p class="mb-2"><strong>How to View Results:</strong></p>
+                    <ul class="list-disc pl-5 mb-4 space-y-1">
+                        <li><strong>On the home page</strong></li>
+                        <li><strong>Click on:</strong> Get Started button.</li>
+                        <li><strong>Choose portal:-</strong>Exam Day or Exam ODL.</li>
+                        <li><strong>Open portal of your choice:</strong> by clicking buttons Exam Day or Exam ODL.</li>
+                        <li><strong>Select Form:</strong> Choose the student's class (Form 1–4).</li>
+                        <li><strong>Enter Exam Number:</strong> Enter the unique ID (e.g., J047 or 004)</li>
+                        <li><strong>Enter Password:</strong> (Default is — unless disabled by Admin).</li>
+                        <li><strong>View Results:</strong> Click "View Results" for the official Progress Report.</li>
+                    </ul>
+                    <p class="text-center text-gray-500 text-sm mt-6 pt-4 border-t border-gray-200">© 2026. All rights reserved. Designed by CHIKUMBUTSO LUBAINI-0 994 039 325 for Chimteka Community  Secondary School.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Welcome Modal Functions
+        function showWelcome() {
+            document.getElementById('welcomeOverlay').classList.add('active');
+        }
+
+        function closeWelcome() {
+            document.getElementById('welcomeOverlay').classList.remove('active');
+        }
+
+        // Help Modal Functions
+        function showHelpModal() {
+            const modal = document.getElementById('helpModal');
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeHelpModal() {
+            const modal = document.getElementById('helpModal');
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('helpModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeHelpModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeHelpModal();
+            }
+        });
+    </script>
+
+    <!-- SETUP WIZARD PAGE -->
+    <div id="setupWizardPage" class="page" style="max-width:100%;width:100%;">
+        <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-amber-50 px-6 py-12">
+            <div class="max-w-md w-full">
+                <div class="bg-white p-10 rounded-3xl shadow-2xl border border-orange-100 text-center relative overflow-hidden">
+                    <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-amber-500"></div>
+                    <div class="w-20 h-20 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <i class="fas fa-shield-alt text-3xl text-orange-600"></i>
+                    </div>
+                    <h2 class="text-2xl font-display font-bold mb-2 text-orange-600">First-Time Token Setup</h2>
+                    <p class="text-gray-500 text-sm mb-6">Encrypt your GitHub Personal Access Token with a password. The encrypted token will be embedded in this HTML file.</p>
+
+                    <div class="text-left space-y-4">
+                        <div>
+                            <label class="text-xs font-bold block mb-1 uppercase tracking-wider text-gray-600">GitHub Personal Access Token</label>
+                            <input type="password" id="setupToken" placeholder="ghp_..." class="admin-input mb-0">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold block mb-1 uppercase tracking-wider text-gray-600">Choose a Password (for login)</label>
+                            <input type="password" id="setupPassword" placeholder="" class="admin-input mb-0">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold block mb-1 uppercase tracking-wider text-gray-600">Confirm Password</label>
+                            <input type="password" id="setupPasswordConfirm" placeholder="" class="admin-input mb-0">
+                        </div>
+                    </div>
+
+                    <div id="setupError" style="color:#e74c3c; margin-top:10px; font-size:0.9em; display:none;"></div>
+                    <div id="setupSuccess" style="color:#27ae60; margin-top:10px; font-size:0.9em; display:none;"></div>
+
+                    <label for="setupEncryptedOutput" id="encryptedOutputLabel" class="text-xs font-bold block mb-1 uppercase tracking-wider text-gray-600" style="display:none; margin-top:15px;">Encrypted Token (copy this)</label>
+                    <textarea id="setupEncryptedOutput" readonly placeholder="" style="display:none; width:100%; min-height:80px; font-size:0.75em; font-family:monospace; word-break:break-all; border:2px solid #e2e8f0; border-radius:10px; padding:12px; box-sizing:border-box; margin-top:5px;"></textarea>
+
+                    <button onclick="runSetupEncrypt()" class="w-full bg-orange-500 text-white py-3.5 rounded-xl font-bold hover:bg-orange-600 transition-all mt-4 shadow-lg shadow-orange-500/20">
+                        <i class="fas fa-lock mr-2"></i> Encrypt Token
+                    </button>
+                    <button onclick="copyEncryptedToken()" id="copyTokenBtn" class="w-full bg-green-500 text-white py-3.5 rounded-xl font-bold hover:bg-green-600 transition-all mt-3" style="display:none;">
+                        <i class="fas fa-copy mr-2"></i> Copy to Clipboard
+                    </button>
+                    <button onclick="closeSetupWizard()" class="mt-4 text-gray-400 text-sm hover:text-gray-600 transition-colors">
+                        <i class="fas fa-arrow-left mr-1"></i> Back to Admin Panel
+                    </button>
+
+                    <div style="margin-top:20px; padding:15px; background:#f8f9fa; border-radius:12px; text-align:left; font-size:0.8em; color:#555;">
+                        <strong>Instructions:</strong>
+                        <ol style="margin-top:8px; padding-left:20px; line-height:1.8;">
+                            <li>Enter your GitHub token (starts with ghp_...)</li>
+                            <li>Choose a strong password (this is your login password)</li>
+                            <li>Click "Encrypt Token"</li>
+                            <li>Click "Copy to Clipboard"</li>
+                            <li>Open this HTML file in a text editor</li>
+                            <li>Find: __ENCRYPTED_TOKEN_HERE__</li>
+                            <li>Replace it with the copied encrypted text</li>
+                            <li>Save and re-upload to GitHub</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
