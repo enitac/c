@@ -193,7 +193,7 @@
   "stampImage": "",
   "stampDate": "",
   "stampEnabled": true,
-  "hideReaccessSetup": true,
+  "hideReaccessSetup": false,
   "uploadToggles": {
     "stamp": false,
     "pasteStudent": false,
