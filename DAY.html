@@ -13,23 +13,28 @@
 // --- Custom notification system (replaces silent alert suppression) ---
 window._realAlert = window.alert;
 window.alert = function(msg) {
-    console.warn('[ALERT]', msg);
-    // Show a visible toast notification instead of silently swallowing
-    try {
-        let toast = document.getElementById('_globalToast');
-        if (!toast) {
-            toast = document.createElement('div');
-            toast.id = '_globalToast';
-            toast.style.cssText = 'position:fixed;top:20px;right:20px;max-width:420px;padding:14px 22px;background:#c0392b;color:#fff;border-radius:8px;z-index:999999;font-family:Segoe UI,sans-serif;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;cursor:pointer;word-wrap:break-word;';
-            toast.onclick = function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); };
-            document.body.appendChild(toast);
-        }
-        toast.textContent = msg;
-        toast.style.opacity = '1';
-        clearTimeout(toast._timer);
-        toast._timer = setTimeout(function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); }, 6000);
-    } catch(e) {
-        // Last resort fallback
+    var msgStr = (msg || '').toString();
+    // Only show toast for success messages (containing "successfully")
+    if (/successfully/i.test(msgStr)) {
+        console.log('[ALERT - success]', msgStr);
+        try {
+            let toast = document.getElementById('_globalToast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = '_globalToast';
+                toast.style.cssText = 'position:fixed;top:20px;right:20px;max-width:420px;padding:14px 22px;background:#27ae60;color:#fff;border-radius:8px;z-index:999999;font-family:Segoe UI,sans-serif;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;cursor:pointer;word-wrap:break-word;';
+                toast.onclick = function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); };
+                document.body.appendChild(toast);
+            }
+            toast.textContent = msgStr;
+            toast.style.background = '#27ae60';
+            toast.style.opacity = '1';
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(function() { toast.style.opacity = '0'; setTimeout(function() { toast.remove(); }, 300); }, 6000);
+        } catch(e) {}
+    } else {
+        // Non-success alerts: suppress toast, just log
+        console.warn('[ALERT suppressed]', msgStr);
     }
 };
 
@@ -1037,10 +1042,11 @@ function saveSelectedSubjectsToRepo() {
         text-align: left;
     }
 
+    /* SURGICAL FIX: slightly reduced from 8pt to 7.5pt */
     #reportGradeKeyTable {
         width: 50%;
         border-collapse: collapse;
-        font-size: 8pt;
+        font-size: 7.5pt;
         border: 1px solid black;
         margin: 0;
         table-layout: fixed;
@@ -1211,18 +1217,18 @@ function saveSelectedSubjectsToRepo() {
     }
 
     /* Stacked student info */
+    /* SURGICAL FIX: slightly reduced from 11pt to 10.5pt */
     #reportDetails p, #briefReportDetails p {
         margin: 0 0 4px 0 !important;
         padding: 0;
         text-align: left !important;
-        font-size: 11pt;
+        font-size: 10.5pt;
         color: black;
     }
 
-    /* Force progress sheet to fit on ONE A4 page */
+    /* SURGICAL FIX: Removed max-height on screen so card expands with content */
     #progressReport {
         padding: 20px 20px !important;
-        max-height: 1123px !important;
         overflow: visible !important;
     }
 
@@ -1232,21 +1238,22 @@ function saveSelectedSubjectsToRepo() {
         overflow: visible !important;
     }
 
-    /* Make table compact */
+    /* Make table compact — SURGICAL FIX: slightly reduced from 9pt to 8.5pt */
     #resultsTable th,
     #resultsTable td {
         padding: 4px 3px !important;
-        font-size: 9pt !important;
+        font-size: 8.5pt !important;
     }
 
-    /* Reduce fonts for summary and key */
+    /* Reduce fonts for summary and key — SURGICAL FIX: slightly reduced from 9pt to 8.5pt */
     #summaryAndKeyWrapper, #reportSummary, #gradeKeyPlaceholder {
-        font-size: 9pt !important;
+        font-size: 8.5pt !important;
     }
 
+    /* SURGICAL FIX: slightly reduced from 7.5pt to 7pt */
     #gradeKeyTableNew td, #gradeKeyTableNew th {
         padding: 2px !important;
-        font-size: 7.5pt !important;
+        font-size: 7pt !important;
     }
 
     /* A4 Printing Styles - SURGICAL FIX: Equal margins 2cm top, 1cm left/right, 1cm bottom */
@@ -6558,7 +6565,7 @@ async function showStudentMarksList() {
         const sneVisible = currentConfig && currentConfig.sneColumnVisible !== false;
         const sexVisible = currentConfig && currentConfig.sexColumnVisible !== false;
         const row = document.createElement('tr');
-        const inputDisabled = isLocked ? 'readonly style="width:80px;padding:6px;text-align:center;border:1px solid #e74c3c;border-radius:4px;background:#f5f5f5;color:#999;"' : 'oninput="updateStudentScore(\'' + form + '\', ' + i + ', \'' + subject + '\', this.value)" style="width:80px;padding:6px;text-align:center;border:2px solid #e91e8c;border-radius:8px;background:#fce4ec;color:#c2185b;font-weight:700;font-size:1em;"';
+        const inputDisabled = isLocked ? 'readonly style="width:80px;padding:6px;text-align:center;border:1px solid #e74c3c;border-radius:4px;background:#f5f5f5;color:#999;"' : 'oninput="if(!validateScore(this.value)){this.value=\'\';return;};updateStudentScore(\'' + form + '\', ' + i + ', \'' + subject + '\', this.value)" style="width:80px;padding:6px;text-align:center;border:2px solid #e91e8c;border-radius:8px;background:#fce4ec;color:#c2185b;font-weight:700;font-size:1em;"';
         row.innerHTML = `
             <td style="border:2px solid #6c3483;padding:8px 6px;text-align:center;background:#f3e5f5;font-weight:600;font-size:0.9em;">${examNo}</td>
             <td style="border:2px solid #6c3483;padding:8px 6px;text-align:left;background:#f5f5f5;font-size:0.9em;">${name}</td>
@@ -6582,6 +6589,7 @@ async function showStudentMarksList() {
                 <input type="text" 
                        id="pasteScore_${i}" 
                        onpaste="distributePasteScores(event, ${i})"
+                       oninput="var pv=this.value; if(!validateScore(pv)){this.value='';}"
                        style="width:80px;padding:6px;text-align:center;border:2px solid #8e44ad;border-radius:8px;background:#fff;color:#6c3483;font-weight:700;font-size:1em;"
                        placeholder=" ">
             </td>
@@ -6614,7 +6622,24 @@ async function showStudentMarksList() {
     // Voice mic now activates when user clicks "Show Voice Entry" button
 }
 
+// Score validation: accept 0, 1, 2-digit scores and 100; reject 3-digit scores (except 100)
+function validateScore(val) {
+    var v = val.toString().trim();
+    if (v === '') return true; // allow clearing
+    var n = Number(v);
+    if (isNaN(n)) return false;
+    if (n < 0 || n > 100) return false;
+    if (v.length > 2 && v !== '100') return false;
+    return true;
+}
+
 function updateStudentScore(form, index, subject, value) {
+    // SURGICAL FIX: Reject invalid scores
+    if (!validateScore(value)) {
+        var inp = document.getElementById('score_' + index);
+        if (inp) inp.value = (currentClassData[form] && currentClassData[form][index]) ? (currentClassData[form][index][subject] || '') : '';
+        return;
+    }
     if (currentClassData[form] && currentClassData[form][index]) {
         currentClassData[form][index][subject] = value.trim();
         
@@ -9173,7 +9198,7 @@ function distributePasteScores(event, startRow) {
     var totalInputs = document.querySelectorAll('[id^="pasteScore_"]').length;
     for (var j = 0; j < values.length && (startRow + j) < totalInputs; j++) {
         var inp = document.getElementById('pasteScore_' + (startRow + j));
-        if (inp) inp.value = values[j];
+        if (inp) { if (validateScore(values[j])) { inp.value = values[j]; } else { inp.value = ''; } }
     }
 }
 
@@ -9193,13 +9218,15 @@ function applyPasteColumnScores() {
         const pasteInput = document.getElementById('pasteScore_' + i);
         if (pasteInput) {
             const val = pasteInput.value.trim();
-            if (val !== '') {
+            if (val !== '' && validateScore(val)) {
                 students[i][subject] = val;
                 const scoreInput = document.getElementById('score_' + i);
                 if (scoreInput && !scoreInput.readOnly) {
                     scoreInput.value = val;
                 }
                 appliedCount++;
+            } else if (val !== '' && !validateScore(val)) {
+                pasteInput.value = '';
             }
         }
     }
