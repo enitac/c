@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Chimteka Community Secondary Portal</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -639,7 +639,7 @@ function saveSelectedSubjectsToRepo() {
         text-align: center;
     }
 
-    select, input:not([type="file"]):not([type="password"]), textarea {
+    select, input:not([type="file"]), textarea {
         width: 100%;
         max-width: 400px;
         padding: 12px;
@@ -655,6 +655,18 @@ function saveSelectedSubjectsToRepo() {
         display: block;
         margin-left: auto;
         margin-right: auto;
+    }
+
+    /* iOS Safari anti-zoom: ensure all inputs on target pages have font-size >= 16px */
+    #initialPage input, #initialPage select, #initialPage textarea,
+    #briefReport input, #briefReport select, #briefReport textarea,
+    #adminLoginPage input, #adminLoginPage select, #adminLoginPage textarea,
+    #dataEntryPage input, #dataEntryPage select, #dataEntryPage textarea,
+    #scoreSheetView input, #scoreSheetView select, #scoreSheetView textarea,
+    #uploadsPage input, #uploadsPage select, #uploadsPage textarea,
+    #sheetsPage input, #sheetsPage select, #sheetsPage textarea,
+    #gradesPage input, #gradesPage select, #gradesPage textarea {
+        font-size: 16px !important;
     }
 
     input[type="file"] {
@@ -2259,7 +2271,7 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
         <option value="form3">Form 3</option>
         <option value="form4">Form 4</option>
     </select>
-    <textarea id="pasteStudentListArea" rows="6" placeholder="Paste here, e.g.:&#10;1001, John Banda, M&#10;1002, Mary Phiri, F&#10;1003, Peter Mwale, M" style="max-width:400px;font-size:0.85em;"></textarea>
+    <textarea id="pasteStudentListArea" rows="6" placeholder="Paste here, e.g.:&#10;1001, John Banda, M&#10;1002, Mary Phiri, F&#10;1003, Peter Mwale, M" style="max-width:400px;font-size:1em;"></textarea>
     <button onclick="savePastedStudentList()" style="background:#8e44ad;">Save Pasted List</button>
     </div>
 
@@ -2582,13 +2594,13 @@ src="https://raw.githubusercontent.com/enitac/c/main/logo.png" class="logo" alt=
         <div id="batchRangeInputs" style="display:none; margin-bottom:10px;">
             <div style="display:flex; justify-content:center; gap:6px; align-items:center;">
                 <label style="margin:0; font-size:0.85em; font-weight:500;">From #</label>
-                <input type="number" id="batchRangeFrom" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:0.85em;">
+                <input type="number" id="batchRangeFrom" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:16px;">
                 <label style="margin:0; font-size:0.85em; font-weight:500;">To #</label>
-                <input type="number" id="batchRangeTo" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:0.85em;">
+                <input type="number" id="batchRangeTo" min="1" style="width:60px; max-width:60px; padding:5px; margin:0; font-size:16px;">
                 <button onclick="applyBatchRange()" class="small-btn" style="background:#2980b9; max-width:60px; margin:0; padding:5px 8px; font-size:0.85em;">Go</button>
             </div>
         </div>
-        <input type="text" id="batchSearchInput" placeholder="Search name or exam number..." onkeyup="filterBatchPrintList()" style="max-width:100%; margin-bottom:10px; font-size:0.85em;">
+        <input type="text" id="batchSearchInput" placeholder="Search name or exam number..." onkeyup="filterBatchPrintList()" style="max-width:100%; margin-bottom:10px; font-size:16px;">
         <div id="batchStudentList" style="max-height:300px; overflow-y:auto; border:1px solid #ddd; border-radius:6px; text-align:left;"></div>
         <div style="display:flex; justify-content:center; gap:8px; margin-top:10px;">
             <button onclick="executeBatchPrint()" style="background:#27ae60; max-width:200px; margin:0; padding:10px 16px;">Print Selected</button>
@@ -4546,7 +4558,7 @@ function showPasswordModal(message) {
         const input = document.createElement('input');
         input.type = 'password';
         input.placeholder = 'Enter password';
-        input.style.cssText = 'width:100%;padding:10px 12px;border:1px solid #cc6600;border-radius:8px;font-size:14px;text-align:center;box-sizing:border-box;';
+        input.style.cssText = 'width:100%;padding:10px 12px;border:1px solid #cc6600;border-radius:8px;font-size:16px;text-align:center;box-sizing:border-box;';
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = 'display:flex;gap:10px;margin-top:15px;justify-content:center;';
@@ -6524,7 +6536,7 @@ async function showStudentMarksList() {
                        id="sn_${i}" 
                        value="${snVal}" 
                        oninput="updateStudentSN('${form}', ${i}, this.value)"
-                       style="width:35px;padding:4px;text-align:center;border:2px solid #6c3483;border-radius:6px;font-size:0.85em;background:#f3e5f5;"
+                       style="width:35px;padding:4px;text-align:center;border:2px solid #6c3483;border-radius:6px;font-size:16px;background:#f3e5f5;"
                        placeholder=" ">
             </td>` : ''}
             <td style="border:2px solid #6c3483;padding:8px 6px;text-align:center;background:#fce4ec;">
@@ -9224,9 +9236,9 @@ async function loadEditNamesUI() {
             const name = student["STUDENT'S NAME"] || '';
             const sex = student["Sex"] || '-';
             html += `<tr style="background:${index % 2 === 0 ? '#fff' : '#f9f9f9'};">
-                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><input type="text" data-edit-examno="${index}" value="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;text-align:center;font-weight:bold;" /></td>
-                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><select data-examno-sex="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;text-align:center;"><option value="M"${sex==='M'?' selected':''}>M</option><option value="F"${sex==='F'?' selected':''}>F</option></select></td>
-                <td style="border:1px solid #ddd;padding:4px;"><input type="text" data-examno="${examNo}" value="${name.replace(/"/g, '&quot;')}" oninput="if(this.value.length>35){alert('Name must not exceed 35 characters.');this.value=this.dataset.prev||'';}else{this.dataset.prev=this.value;}" style="width:100%;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;" /></td>
+                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><input type="text" data-edit-examno="${index}" value="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:16px;box-sizing:border-box;text-align:center;font-weight:bold;" /></td>
+                <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><select data-examno-sex="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:16px;box-sizing:border-box;text-align:center;"><option value="M"${sex==='M'?' selected':''}>M</option><option value="F"${sex==='F'?' selected':''}>F</option></select></td>
+                <td style="border:1px solid #ddd;padding:4px;"><input type="text" data-examno="${examNo}" value="${name.replace(/"/g, '&quot;')}" oninput="if(this.value.length>35){alert('Name must not exceed 35 characters.');this.value=this.dataset.prev||'';}else{this.dataset.prev=this.value;}" style="width:100%;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:16px;box-sizing:border-box;" /></td>
             </tr>`;
         });
 
