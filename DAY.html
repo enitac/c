@@ -248,7 +248,7 @@ function showFrontPagePopup(msg) {
 function exportToExcel(tableId, filename) {
     const table = document.getElementById(tableId);
     if (!table) {
-        alert("Table not found! Make sure the sheet is displayed first.");
+
         return;
     }
     try {
@@ -256,7 +256,7 @@ function exportToExcel(tableId, filename) {
         XLSX.writeFile(wb, filename + ".xlsx");
     } catch(e) {
         console.error('Excel export error:', e);
-        alert('Export failed. Please ensure the table is visible and try again.');
+
     }
 }
 
@@ -293,7 +293,7 @@ function toggleSubjectLock() {
     const selectedClass = classSelect ? classSelect.value : '';
 
     if (!selectedClass) {
-        alert('Please select a Class before hiding or unhiding a subject.');
+
         return;
     }
 
@@ -334,7 +334,7 @@ function toggleSubjectLock() {
 
 function togglePasswordAccess() {
     if (!currentConfig) {
-        alert('Configuration not loaded. Please enter Authorization Code.');
+
         return;
     }
     
@@ -345,7 +345,7 @@ function togglePasswordAccess() {
 
 async function savePasswordAccess() {
     if (!currentConfig) {
-        alert('Configuration not loaded. Please enter Authorization Code.');
+
         return;
     }
     await handleSaveConfig();
@@ -370,7 +370,7 @@ function openHideSubjectPopup() {
     var classSelect = document.getElementById('lockClassSelect');
     var selectedClass = classSelect ? classSelect.value : '';
     if (!selectedClass) {
-        alert('Please select a Class first.');
+
         return;
     }
     var overlay = document.getElementById('subjectHidePopupOverlay');
@@ -462,13 +462,13 @@ function saveScoresAsExcel() {
     const subject = document.getElementById('dataSubjectSelect').value;
     
     if (!form || !subject) {
-        alert('Please select a Class and Subject first.');
+
         return;
     }
     
     const students = currentClassData[form];
     if (!students || students.length === 0) {
-        alert('No student data loaded. Please select a Class and Subject first.');
+
         return;
     }
     
@@ -506,7 +506,7 @@ function saveScoresAsExcel() {
         XLSX.writeFile(wb, filename + '.xlsx');
     } catch(e) {
         console.error('Excel export error:', e);
-        alert('Export failed. Please try again.');
+
     }
 }
 
@@ -516,23 +516,23 @@ function saveSelectedSubjectsToRepo() {
     const token = getDecryptedToken();
     
     if (!form) {
-        alert('Please select a Class first.');
+
         return;
     }
     
     if (!subject) {
-        alert('Please select a Subject to save.');
+
         return;
     }
     
     if (!token) {
-        alert('Authorization Code required. Please enter it in Admin Dashboard.');
+
         return;
     }
     
     const classData = currentClassData[form];
     if (!classData || classData.length === 0) {
-        alert('No student data loaded.');
+
         return;
     }
     
@@ -1222,7 +1222,7 @@ function saveSelectedSubjectsToRepo() {
     /* Force progress sheet to fit on ONE A4 page */
     #progressReport {
         padding: 20px 20px !important;
-        max-height: 1123px !important;
+        max-height: none !important;
         overflow: visible !important;
     }
 
@@ -1802,13 +1802,13 @@ function saveSelectedSubjectsToRepo() {
     #progressReport #reportDetails {
         width: 100% !important;
         max-width: 100% !important;
-        overflow: hidden !important;
+        overflow-x: hidden !important;
         box-sizing: border-box !important;
     }
     #progressReport #gradeKeyPlaceholder {
         width: 100% !important;
         max-width: 100% !important;
-        overflow: hidden !important;
+        overflow-x: hidden !important;
     }
     #progressReport > * {
         max-width: 100% !important;
@@ -3469,7 +3469,7 @@ async function commitFile(path, message, content, sha, token, method) {
         return await response.json();
     } catch (error) {
         console.error('Commit/Delete Failed:', error);
-        alert(`Operation Failed: ${safeMsg(error)}. Check your Authorization Code and repository access.`);
+
         return null;
     }
 }
@@ -3579,7 +3579,7 @@ async function fetchConfig(token) {
 
     } catch (error) {
         console.error('Error fetching config:', error);
-        alert(`Error: ${safeMsg(error)}`);
+
         return { config: getDefaultConfig(), sha: null };
     } finally {
         hideLoading();
@@ -3673,12 +3673,12 @@ function generateUniqueFourDigitPasswords(count) {
 async function generateStudentPasswords() {
     var form = document.getElementById('passwordGenClassSelect').value;
     if (!form) {
-        alert('Please select a class first.');
+
         return;
     }
     var token = getDecryptedToken();
     if (!token) {
-        alert('Authorization Code required. Please enter it in Admin Dashboard.');
+
         return;
     }
     if (!confirm('Generate unique 4-digit passwords for ALL students in ' + form.toUpperCase().replace('FORM', 'Form ') + '? This will overwrite existing passwords for this class.')) {
@@ -3688,7 +3688,7 @@ async function generateStudentPasswords() {
     try {
         var data = await fetchClassData(form);
         if (!data || data.length === 0) {
-            alert('No students found in ' + form + '. Upload a CSV first.');
+
             hideLoading();
             return;
         }
@@ -3707,7 +3707,7 @@ async function generateStudentPasswords() {
         document.getElementById('passwordGenStatus').style.color = '#2ecc71';
     } catch (e) {
         console.error('Password generation error:', e);
-        alert('Failed to generate passwords: ' + safeMsg(e));
+
     } finally {
         hideLoading();
     }
@@ -3781,13 +3781,13 @@ async function loadPasswordTable() {
 function printStudentPasswords() {
     var form = document.getElementById('passwordGenClassSelect').value;
     if (!form) {
-        alert('Please select a class first.');
+
         return;
     }
     var container = document.getElementById('passwordGenTableContainer');
     var table = container ? container.querySelector('table') : null;
     if (!table) {
-        alert('No password table to print. Generate passwords first.');
+
         return;
     }
     var formDisplay = form.toUpperCase().replace('FORM', 'Form ');
@@ -3821,12 +3821,12 @@ function printStudentPasswords() {
 async function resetStudentPasswords() {
     var form = document.getElementById('passwordGenClassSelect').value;
     if (!form) {
-        alert('Please select a class first.');
+
         return;
     }
     var token = getDecryptedToken();
     if (!token) {
-        alert('Authorization Code required. Please enter it in Admin Dashboard.');
+
         return;
     }
     if (!confirm('Reset ALL passwords for ' + form.toUpperCase().replace('FORM', 'Form ') + ' to default 000?\n\nStudents will use 000 to access their results until new passwords are generated.')) {
@@ -3836,7 +3836,7 @@ async function resetStudentPasswords() {
     try {
         var data = await fetchClassData(form);
         if (!data || data.length === 0) {
-            alert('No students found in ' + form + '. Upload a CSV first.');
+
             hideLoading();
             return;
         }
@@ -3854,7 +3854,7 @@ async function resetStudentPasswords() {
         document.getElementById('passwordGenStatus').style.color = '#e74c3c';
     } catch (e) {
         console.error('Password reset error:', e);
-        alert('Failed to reset passwords: ' + safeMsg(e));
+
     } finally {
         hideLoading();
     }
@@ -3863,7 +3863,7 @@ async function resetStudentPasswords() {
 async function handleSaveConfig() {
     const token = getDecryptedToken();
     if (!token) {
-        alert('Please enter your Authorization Code.');
+
         return;
     }
 
@@ -3938,15 +3938,15 @@ async function uploadCSV() {
     const fileInput = document.getElementById('csvUpload');
 
     if (!token) {
-        alert('Please enter Authorization Code.');
+
         return;
     }
     if (!form) {
-        alert('Please select a Class.');
+
         return;
     }
     if (!fileInput.files.length) {
-        alert('Please select a CSV file.');
+
         return;
     }
 
@@ -3975,7 +3975,7 @@ async function uploadCSV() {
         var longNames = preCheckData.filter(s => (s["STUDENT'S NAME"] || '').length > 35);
         if (longNames.length > 0) {
             hideLoading();
-            alert('Upload rejected. ' + longNames.length + ' student(s) have names exceeding 35 characters.');
+
             return;
         }
 
@@ -4006,7 +4006,7 @@ async function uploadCSV() {
     } catch (error) {
         hideLoading();
         console.error('CSV Upload failed:', error);
-        alert(`CSV Upload Failed: ${safeMsg(error)}`);
+
     }
 }
 
@@ -4017,7 +4017,7 @@ async function refreshFileList() {
     currentDataSha = {};
 
     if (!token) {
-        alert('Please enter Authorization Code.');
+
         return;
     }
 
@@ -4044,7 +4044,7 @@ async function refreshFileList() {
 
     } catch (error) {
         console.error('Error fetching file list:', error);
-        alert(`Error fetching file list: ${safeMsg(error)}`);
+
     } finally {
         hideLoading();
     }
@@ -4056,11 +4056,11 @@ async function deleteCSV() {
     const selectedValue = deleteDropdown.value;
 
     if (!token) {
-        alert('Please enter Authorization Code.');
+
         return;
     }
     if (!selectedValue) {
-        alert('Please select a file to delete.');
+
         return;
     }
 
@@ -4100,12 +4100,12 @@ async function submitAndSaveScores() {
     const token = getDecryptedToken();
 
     if (!form || !subject) {
-        alert('Please select a Class and Subject.');
+
         return;
     }
 
     if (!token) {
-        alert('Authorization Code required.');
+
         return;
     }
 
@@ -4120,7 +4120,7 @@ async function submitAndSaveScores() {
         const classData = currentClassData[form];
         if (!classData || classData.length === 0) {
             hideLoading();
-            alert('No student data loaded.');
+
             return;
         }
 
@@ -4164,7 +4164,7 @@ async function submitAndSaveScores() {
     } catch (error) {
         hideLoading();
         console.error('Save failed:', error);
-        alert(`Failed to save scores: ${safeMsg(error)}`);
+
     }
 }
 
@@ -4174,7 +4174,7 @@ async function deleteScore() {
     const subject = document.getElementById('dataSubjectSelect').value;
 
     if (!form || !studentNumber || !subject) {
-        alert('Please select a Class, Student, and Subject.');
+
         return;
     }
 
@@ -4187,7 +4187,7 @@ async function deleteScore() {
 
     const classData = await fetchClassData(form);
     if (!classData || classData.length === 0) {
-        alert(`Could not load data for ${form}.`);
+
         hideLoading();
         return;
     }
@@ -4195,7 +4195,7 @@ async function deleteScore() {
     const studentIndex = classData.findIndex(s => s["Exam Number"] === studentNumber);
 
     if (studentIndex === -1) {
-        alert('Student not found.');
+
         hideLoading();
         return;
     }
@@ -4340,7 +4340,7 @@ async function runSetupEncrypt() {
 function copyEncryptedToken() {
     const output = document.getElementById('setupEncryptedOutput');
     if (!output.value) {
-        alert('Nothing to copy. Encrypt your token first.');
+
         return;
     }
     output.select();
@@ -4557,13 +4557,13 @@ function openAdminHome() {
 // --- SETUP RE-ACCESS: Password-gated re-entry to setup wizard ---
 async function openSetupAuth() {
     if (!currentConfig || !currentConfig.setupPassword) {
-        alert('No setup protection password is configured. Please contact your administrator.');
+
         return;
     }
     var pass = await showPasswordModal('Enter Setup Protection Password to re-access Setup:');
     if (pass === null) return; // User cancelled
     if (pass !== currentConfig.setupPassword) {
-        alert('Incorrect password. Access denied.');
+
         return;
     }
     openSetupWizard();
@@ -4624,14 +4624,14 @@ function showPasswordModal(message) {
 async function openUploadsAuth() {
     const token = getDecryptedToken();
     if (!token) {
-        alert('You need Authorization Code.');
+
         return;
     }
     // Custom password modal with masked input (dots)
     const pass = await showPasswordModal('Enter password to access File Uploads:');
     if (pass === null) return; // User cancelled
     if (pass !== 'exam0') {
-        alert('Incorrect password. Access denied.');
+
         return;
     }
     await initializeConfig(token);
@@ -4649,7 +4649,7 @@ async function openSetUpPanel() {
     const pass = await showPasswordModal('Enter Set-Up password:');
     if (pass === null) return; // User cancelled
     if (pass !== '1972') {
-        alert('Incorrect password. Access denied.');
+
         return;
     }
     showSetUpWindow();
@@ -4810,9 +4810,9 @@ async function archiveExamData() {
     const term = document.getElementById('archiveTermSelect').value;
     const statusEl = document.getElementById('archiveStatus');
 
-    if (!token) { alert('Please enter Authorization Code.'); return; }
-    if (!form) { alert('Please select a Class.'); return; }
-    if (!year) { alert('Please enter a Year.'); return; }
+ if (!token) { return; }
+ if (!form) { return; }
+ if (!year) { return; }
 
     const confirmArchive = confirm(`Archive exam data for ${form.toUpperCase()} - Year ${year} - Term ${term}?\n\nThis will send a copy of the current data to the archive repository.`);
     if (!confirmArchive) return;
@@ -5439,7 +5439,7 @@ function saveArchiveDetailPdf() {
     }).catch(err => {
         _hideReportStamps();
         hideLoading();
-        alert('PDF generation failed: ' + err.message);
+
     });
 }
 
@@ -5447,7 +5447,7 @@ function saveArchiveDetailPdf() {
 function openDataEntryAuth() {
     const token = getDecryptedToken();
     if (!token) {
-        alert('You need Authorization Code.');
+
         return;
     }
     openDataEntryPage();
@@ -5461,7 +5461,7 @@ async function loadResults(isStudentPortal) {
         const password = document.getElementById('passwordInput').value.trim();
 
         if (!form || !studentNumber) {
-            showFrontPagePopup('Please select a class, enter your exam number and password to view results.');
+
             return;
         }
 
@@ -5473,7 +5473,7 @@ async function loadResults(isStudentPortal) {
 
         // When password is DISABLED, deny access regardless of whether password is entered or not
         if (isStudentPortal && !passwordRequired) {
-            showFrontPagePopup('Results not yet out.');
+
             document.getElementById('passwordInput').value = '';
             return;
         }
@@ -5481,12 +5481,12 @@ async function loadResults(isStudentPortal) {
         // When password is ENABLED, require correct individual student password
         if (isStudentPortal && passwordRequired) {
             if (!password) {
-                showFrontPagePopup('Please enter your password.');
+
                 return;
             }
             const studentPw = currentConfig.studentPasswords && currentConfig.studentPasswords[form] && currentConfig.studentPasswords[form][studentNumber];
             if (!studentPw || password !== (studentPw + '').trim()) {
-                showFrontPagePopup('Incorrect password.');
+
                 hideLoading();
                 return;
             }
@@ -5501,7 +5501,7 @@ async function loadResults(isStudentPortal) {
         updateLoadingPercent(50);
 
         if (data.length === 0) {
-            showFrontPagePopup('No data found for ' + form + '.');
+
             hideLoading();
             return;
         }
@@ -5509,7 +5509,7 @@ async function loadResults(isStudentPortal) {
         const student = data.find(s => (s["Exam Number"] + '').trim().toUpperCase() === studentNumber);
 
         if (!student) {
-            showFrontPagePopup('Incorrect exam number.');
+
             hideLoading();
             return;
         }
@@ -5663,7 +5663,7 @@ async function loadResults(isStudentPortal) {
         goToPage('progressReport');
     } catch (error) {
         console.error('Error loading results:', error);
-        alert(`Failed to load results.`);
+
         hideLoading();
     }
 }
@@ -5724,7 +5724,7 @@ function openFullPdf() {
         element.classList.remove('_pdfCapture');
         _hideReportStamps();
         console.error("Error generating PDF:", error);
-        alert("Failed to generate PDF.");
+
         hideLoading();
     });
 }
@@ -5735,7 +5735,7 @@ async function loadBriefResults() {
     const password = document.getElementById('passwordInput').value.trim();
 
     if (!form || !studentNumber) {
-        showFrontPagePopup('Please select a class, enter your exam number and password to view results.');
+
         return;
     }
 
@@ -5747,13 +5747,13 @@ async function loadBriefResults() {
 
     // SURGICAL FIX: When disabled, deny access whether password entered or not
     if (passwordRequiredBrief === false) {
-        showFrontPagePopup('Results not yet out.');
+
         document.getElementById('passwordInput').value = '';
         return;
     }
 
     if (passwordRequiredBrief && !password) {
-        showFrontPagePopup('Please enter your password.');
+
         return;
     }
 
@@ -5764,7 +5764,7 @@ async function loadBriefResults() {
     updateLoadingPercent(50);
 
     if (data.length === 0) {
-        showFrontPagePopup('No data found.');
+
         hideLoading();
         return;
     }
@@ -5772,7 +5772,7 @@ async function loadBriefResults() {
     const student = data.find(s => (s["Exam Number"] + '').trim().toUpperCase() === studentNumber);
 
     if (!student) {
-        showFrontPagePopup('Incorrect exam number.');
+
         hideLoading();
         return;
     }
@@ -5780,7 +5780,7 @@ async function loadBriefResults() {
     if (passwordRequiredBrief) {
         const studentPwBrief = currentConfig.studentPasswords && currentConfig.studentPasswords[form] && currentConfig.studentPasswords[form][studentNumber];
         if (!studentPwBrief || password !== (studentPwBrief + '').trim()) {
-            showFrontPagePopup('Incorrect password.');
+
             return;
         }
     }
@@ -6014,7 +6014,7 @@ function openScoreSheetView() {
 function openAnalysisPage() {
     const form = document.getElementById('analysisClassSelect').value;
     if (!form) {
-        alert('Please select a class.');
+
         return;
     }
     document.getElementById('analysisTitle').textContent = `${form.toUpperCase()} Class Analysis Report`;
@@ -6501,7 +6501,7 @@ async function openStudentProgressSheet() {
     const examNumber = document.getElementById('progressExamNumber').value.trim().toUpperCase();
 
     if (!classSelect || !examNumber) {
-        alert('Please fill in both fields.');
+
         return;
     }
 
@@ -6514,7 +6514,7 @@ async function openStudentProgressSheet() {
         await loadResults(false);
         goToPage('progressReport');
     } catch (error) {
-        alert('Failed to load progress.');
+
     } finally {
         hideLoading();
     }
@@ -6558,7 +6558,7 @@ async function showStudentMarksList() {
         const sneVisible = currentConfig && currentConfig.sneColumnVisible !== false;
         const sexVisible = currentConfig && currentConfig.sexColumnVisible !== false;
         const row = document.createElement('tr');
-        const inputDisabled = isLocked ? 'readonly style="width:80px;padding:6px;text-align:center;border:1px solid #e74c3c;border-radius:4px;background:#f5f5f5;color:#999;"' : 'oninput="updateStudentScore(\'' + form + '\', ' + i + ', \'' + subject + '\', this.value)" style="width:80px;padding:6px;text-align:center;border:2px solid #e91e8c;border-radius:8px;background:#fce4ec;color:#c2185b;font-weight:700;font-size:1em;"';
+        const inputDisabled = isLocked ? 'readonly maxlength="3" style="width:80px;padding:6px;text-align:center;border:1px solid #e74c3c;border-radius:4px;background:#f5f5f5;color:#999;"' : 'oninput="updateStudentScore(\'' + form + '\', ' + i + ', \'' + subject + '\', this.value)" maxlength="3" style="width:80px;padding:6px;text-align:center;border:2px solid #e91e8c;border-radius:8px;background:#fce4ec;color:#c2185b;font-weight:700;font-size:1em;"';
         row.innerHTML = `
             <td style="border:2px solid #6c3483;padding:8px 6px;text-align:center;background:#f3e5f5;font-weight:600;font-size:0.9em;">${examNo}</td>
             <td style="border:2px solid #6c3483;padding:8px 6px;text-align:left;background:#f5f5f5;font-size:0.9em;">${name}</td>
@@ -6615,6 +6615,17 @@ async function showStudentMarksList() {
 }
 
 function updateStudentScore(form, index, subject, value) {
+    // SURGICAL FIX: Reject 3-digit scores except 100
+    var trimmed = value.trim();
+    if (trimmed !== '') {
+        var numVal = Number(trimmed);
+        if (isNaN(numVal) || trimmed.length > 3 || (trimmed.length === 3 && trimmed !== '100') || numVal < 0 || numVal > 100 || !/^\d+$/.test(trimmed)) {
+            // Invalid score - clear the input and return
+            var scoreInput = document.getElementById('score_' + index);
+            if (scoreInput) scoreInput.value = '';
+            return;
+        }
+    }
     if (currentClassData[form] && currentClassData[form][index]) {
         currentClassData[form][index][subject] = value.trim();
         
@@ -6793,7 +6804,6 @@ function _playSound2_CallScore() {
 }
 
 
-
 // --- Click blocker: prevents user from focusing/typing in voice-locked score inputs ---
 var _clickBlockerInstalled = false;
 function _installClickBlocker() {
@@ -6910,7 +6920,7 @@ function _wordsToNumber(text) {
 function _getSpeechRecognition() {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-        alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.');
+
         return null;
     }
     var recognition = new SR();
@@ -7090,12 +7100,12 @@ function startVoiceExamNumber(silent) {
     var form = document.getElementById('dataClassSelect').value;
     var subject = document.getElementById('dataSubjectSelect').value;
     if (!form || !subject) {
-        if (!silent) alert('Please select a Class and Subject first.');
+ if (!silent) 
         return;
     }
     var panel = document.getElementById('studentMarksPanel');
     if (panel && panel.classList.contains('hidden')) {
-        if (!silent) alert('No students loaded. Select class and subject to load students first.');
+ if (!silent) 
         return;
     }
 
@@ -7297,6 +7307,12 @@ function startVoiceScoreEntry() {
 function _applyVoiceScore(transcript) {
     // Extract numeric score from transcript
     var scoreStr = transcript.replace(/[^0-9]/g, '');
+    if (scoreStr.length > 3 || (scoreStr.length === 3 && scoreStr !== '100')) {
+        _voiceScoreRetryCount++;
+        _setVoiceStatus('Invalid score. Say again... (' + _voiceScoreRetryCount + '/' + _voiceScoreMaxRetries + ')', '#e67e22');
+        setTimeout(function() { _startScoreListening(); }, 500);
+        return;
+    }
     var score = parseInt(scoreStr, 10);
 
     // SURGICAL FIX: Check max retries BEFORE retrying — prevents infinite beep/message loop
@@ -7414,7 +7430,7 @@ function applySNEColumnToTable() {
 
 async function handleSaveSNEConfig() {
     if (!currentConfig) {
-        alert('Configuration not loaded. Please enter Authorization Code.');
+
         return;
     }
     const checkbox = document.getElementById('sneVisibilityCheckbox');
@@ -7465,7 +7481,7 @@ function applySexColumnToTable() {
 
 async function handleSaveSexConfig() {
     if (!currentConfig) {
-        alert('Configuration not loaded. Please enter Authorization Code.');
+
         return;
     }
     const checkbox = document.getElementById('sexVisibilityCheckbox');
@@ -7512,13 +7528,13 @@ async function deleteStudentFromList() {
     const mode = document.getElementById('deleteModeSelect').value;
     const statusEl = document.getElementById('deleteStudentStatus');
 
-    if (!token) { alert('Authorization Code required.'); return; }
-    if (form === '') { alert('Please select a Class.'); return; }
-    if (studentIndex === '') { alert('Please select a Student.'); return; }
+ if (!token) { return; }
+ if (form === '') { return; }
+ if (studentIndex === '') { return; }
 
     const idx = parseInt(studentIndex);
     const classData = await fetchClassData(form);
-    if (!classData || classData.length === 0) { alert('No student data found.'); return; }
+ if (!classData || classData.length === 0) { return; }
 
     const studentName = classData[idx]["STUDENT'S NAME"] || '';
     const studentExamNo = classData[idx]["Exam Number"] || '';
@@ -7530,14 +7546,14 @@ async function deleteStudentFromList() {
         const replDOB = document.getElementById('replacementDOB').value.trim();
 
         if (!replName || !replExamNo) {
-            alert('Replacement Name and Exam Number are required.');
+
             return;
         }
 
-        if (replName.length > 35) { alert('Replacement name must not exceed 35 characters.'); return; }
+ if (replName.length > 35) { return; }
         // Check replacement exam number doesn't already exist (unless same as deleted)
         if (replExamNo !== studentExamNo && classData.some(s => s["Exam Number"] === replExamNo)) {
-            alert('A student with this Replacement Exam Number already exists.');
+
             return;
         }
 
@@ -7627,13 +7643,13 @@ function filterGradeSheet(){
 async function generateAllProgressReports() {
     const form = document.getElementById('progressClassSelect').value;
     if (!form) {
-        alert('Please select a Class/Form first.');
+
         return;
     }
 
     const data = await fetchClassData(form);
     if (!data || data.length === 0) {
-        alert('No student data found for this class.');
+
         return;
     }
 
@@ -7873,7 +7889,7 @@ document.addEventListener('DOMContentLoaded', function() {
             var file = e.target.files[0];
             if (!file) return;
             if (!file.type.startsWith('image/')) {
-                alert('Please select a valid image file.');
+
                 return;
             }
             var reader = new FileReader();
@@ -7894,7 +7910,7 @@ document.addEventListener('DOMContentLoaded', function() {
 async function saveStampToConfig() {
     var token = getDecryptedToken();
     if (!token) {
-        alert('Please enter your Authorization Code first.');
+
         return;
     }
     var stampInput = document.getElementById('stampUploadInput');
@@ -7903,7 +7919,7 @@ async function saveStampToConfig() {
     var stampDate = stampDateInput ? stampDateInput.value : '';
 
     if (!stampImage) {
-        alert('Please upload a stamp image first.');
+
         return;
     }
 
@@ -7937,14 +7953,14 @@ async function saveStampToConfig() {
     } catch (err) {
         hideLoading();
         console.error('Stamp save error:', err);
-        alert('Failed to save stamp. Please try again.');
+
     }
 }
 
 async function removeStampFromConfig() {
     var token = getDecryptedToken();
     if (!token) {
-        alert('Please enter your Authorization Code first.');
+
         return;
     }
     if (!confirm('Remove the official stamp from reports?')) return;
@@ -7972,7 +7988,7 @@ async function removeStampFromConfig() {
         }
     } catch (err) {
         hideLoading();
-        alert('Failed to remove stamp.');
+
     }
 }
 
@@ -8126,7 +8142,7 @@ async function viewBatchSelectedStudent() {
         lastCallingPage = 'sheetsPage';
         await loadResults(false);
     } catch (error) {
-        alert('Failed to load progress report.');
+
     } finally {
         hideLoading();
     }
@@ -8427,10 +8443,10 @@ async function addStudentManually() {
     const sex = document.getElementById('manualSex').value.trim().toUpperCase();
     const dob = document.getElementById('manualDOB').value.trim();
 
-    if (!token) { alert('Authorization Code required.'); return; }
-    if (!form || !name || !examNo) { alert('Form, Name, and Exam Number are required.'); return; }
+ if (!token) { return; }
+ if (!form || !name || !examNo) { return; }
 
-    if (name.length > 35) { alert('Name must not exceed 35 characters.'); return; }
+ if (name.length > 35) { return; }
     showLoading();
     updateLoadingPercent(10);
 
@@ -8442,7 +8458,7 @@ async function addStudentManually() {
         // Check for duplicate exam number
         if (classData.some(s => s["Exam Number"] === examNo)) {
             hideLoading();
-            alert('Student with this Exam Number already exists. Use "Overwrite Existing Student" button instead.');
+
             return;
         }
 
@@ -8484,7 +8500,7 @@ async function addStudentManually() {
     } catch (error) {
         hideLoading();
         console.error('Manual add failed:', error);
-        alert(`Failed to add student: ${safeMsg(error)}`);
+
     }
 }
 </script>
@@ -8824,7 +8840,7 @@ async function shareProgressReportOnWhatsApp() {
     const fileName = `${examNo}_${studentName.replace(/[^a-zA-Z0-9]/g, '_')}_Progress_Report.pdf`;
     const element = document.getElementById('progressReport');
     if (!element) {
-        alert('Progress report not loaded.');
+
         return;
     }
     showLoading();
@@ -8869,7 +8885,7 @@ async function shareProgressReportOnWhatsApp() {
     } catch (error) {
         console.error('Share error:', error);
         hideLoading();
-        alert('Could not generate or share the PDF. Please try saving it first.');
+
     }
 }
 
@@ -8890,7 +8906,7 @@ function populateClearSubjectSelect() {
 async function exportMarkSheetWithFilename() {
     const form = document.getElementById('sheetClassSelect').value;
     if (!form) {
-        alert('Please select a Class first.');
+
         return;
     }
     // Force-refresh the mark sheet from current memory data before export
@@ -8906,7 +8922,7 @@ async function exportMarkSheetWithFilename() {
 async function exportGradeSheetWithFilename() {
     const form = document.getElementById('gradesClassSelect').value;
     if (!form) {
-        alert('Please select a Class first.');
+
         return;
     }
     // Force-refresh the grade sheet from current memory data before export
@@ -8924,8 +8940,8 @@ async function clearScoresForClass() {
     const form = document.getElementById('clearScoresClassSelect').value;
     const subject = document.getElementById('clearSubjectSelect').value;
 
-    if (!token) { alert('Authorization Code required.'); return; }
-    if (!form) { alert('Please select a Class.'); return; }
+ if (!token) { return; }
+ if (!form) { return; }
 
     const confirmMsg = subject 
         ? `Clear all ${subject} scores for ${form.toUpperCase()}?` 
@@ -8940,7 +8956,7 @@ async function clearScoresForClass() {
         const classData = await fetchClassData(form);
         if (!classData || classData.length === 0) {
             hideLoading();
-            alert('No student data found.');
+
             return;
         }
 
@@ -8982,7 +8998,7 @@ async function clearScoresForClass() {
     } catch (error) {
         hideLoading();
         console.error('Clear scores failed:', error);
-        alert(`Failed to clear scores: ${safeMsg(error)}`);
+
     }
 }
 
@@ -8995,8 +9011,8 @@ async function overwriteStudentData() {
     const sex = document.getElementById('manualSex').value.trim().toUpperCase();
     const dob = document.getElementById('manualDOB').value.trim();
 
-    if (!token) { alert('Authorization Code required.'); return; }
-    if (!form || !examNo) { alert('Form and Exam Number are required to find student.'); return; }
+ if (!token) { return; }
+ if (!form || !examNo) { return; }
 
     showLoading();
     updateLoadingPercent(10);
@@ -9010,7 +9026,7 @@ async function overwriteStudentData() {
 
         if (studentIndex === -1) {
             hideLoading();
-            alert('Student with this Exam Number not found.');
+
             return;
         }
 
@@ -9018,7 +9034,7 @@ async function overwriteStudentData() {
         if (name) {
             if (name.length > 35) {
                 hideLoading();
-                alert('Name must not exceed 35 characters.');
+
                 return;
             }
             classData[studentIndex]["STUDENT'S NAME"] = name;
@@ -9052,7 +9068,7 @@ async function overwriteStudentData() {
     } catch (error) {
         hideLoading();
         console.error('Overwrite failed:', error);
-        alert(`Failed to update student: ${safeMsg(error)}`);
+
     }
 }
 
@@ -9062,13 +9078,13 @@ async function savePastedStudentList() {
     const token = getDecryptedToken();
     const text = document.getElementById('pasteStudentListArea').value.trim();
 
-    if (!form) { alert('Please select a Class.'); return; }
-    if (!token) { alert('Authorization Code required. Please enter it in Admin Dashboard.'); return; }
-    if (!text) { alert('Please paste a student list first.'); return; }
+ if (!form) { return; }
+ if (!token) { return; }
+ if (!text) { return; }
 
     // Parse: support comma, tab, or pipe separation; one student per line
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length === 0) { alert('No valid lines found in the pasted text.'); return; }
+ if (lines.length === 0) { return; }
 
     // Pre-check ALL names before processing
     for (let pi = 0; pi < lines.length; pi++) {
@@ -9076,7 +9092,7 @@ async function savePastedStudentList() {
         if (pparts.length >= 2) {
             let pname = pparts[1].trim();
             if (pname.length > 35) {
-                alert('Rejected: name on line ' + (pi+1) + ' exceeds 35 characters.');
+
                 return;
             }
         }
@@ -9090,7 +9106,7 @@ async function savePastedStudentList() {
         const examNo = parts[0].trim();
         const name = parts[1].trim();
         if (name.length > 35) {
-            alert('Rejected: name exceeds 35 characters.');
+
             return;
         }
         const sex = parts.length >= 3 ? parts[2].trim().toUpperCase() : '';
@@ -9105,7 +9121,7 @@ async function savePastedStudentList() {
         newStudents.push(student);
     });
 
-    if (newStudents.length === 0) { alert('Could not parse any students. Use format: ExamNumber, Name, Sex (one per line).'); return; }
+ if (newStudents.length === 0) { .'); return; }
 
     if (!confirm(`Parsed ${newStudents.length} student(s). This will OVERWRITE all existing students in ${form.toUpperCase()}. Continue?`)) return;
 
@@ -9134,7 +9150,7 @@ async function savePastedStudentList() {
     } catch (error) {
         hideLoading();
         console.error('Paste student list failed:', error);
-        alert(`Failed to save pasted list: ${safeMsg(error)}`);
+
     }
 }
 
@@ -9182,10 +9198,10 @@ function applyPasteColumnScores() {
     const form = document.getElementById('dataClassSelect').value;
     const subject = document.getElementById('dataSubjectSelect').value;
 
-    if (!form || !subject) { alert('Please select a Class and Subject first.'); return; }
+ if (!form || !subject) { return; }
 
     const students = currentClassData[form];
-    if (!students || students.length === 0) { alert('No students loaded.'); return; }
+ if (!students || students.length === 0) { return; }
 
     // Read scores from the inline paste-score inputs
     let appliedCount = 0;
@@ -9193,6 +9209,11 @@ function applyPasteColumnScores() {
         const pasteInput = document.getElementById('pasteScore_' + i);
         if (pasteInput) {
             const val = pasteInput.value.trim();
+            // SURGICAL FIX: Validate pasted score - reject 3-digit except 100
+            if (val !== '' && (!/^\d+$/.test(val) || val.length > 3 || (val.length === 3 && val !== '100') || Number(val) > 100)) {
+                pasteInput.value = '';
+                continue;
+            }
             if (val !== '') {
                 students[i][subject] = val;
                 const scoreInput = document.getElementById('score_' + i);
@@ -9204,7 +9225,7 @@ function applyPasteColumnScores() {
         }
     }
 
-    if (appliedCount === 0) { alert('No scores to apply. Enter scores in the PASTE SCORE column first.'); return; }
+ if (appliedCount === 0) { return; }
 
     // Trigger real-time sync updates
     const monitorSelect = document.getElementById('monitorClassSelect');
@@ -9225,7 +9246,7 @@ function applyPasteColumnScores() {
         msg += ' Note: only ' + appliedCount + ' of ' + students.length + ' students had pasted scores.';
     }
     msg += ' Click Save to persist.';
-    alert(msg);
+
 
     // Hide paste column and reset button
     const header = document.getElementById('pasteScoreHeader');
@@ -9270,7 +9291,7 @@ async function loadEditNamesUI() {
             html += `<tr style="background:${index % 2 === 0 ? '#fff' : '#f9f9f9'};">
                 <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><input type="text" data-edit-examno="${index}" value="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;text-align:center;font-weight:bold;" /></td>
                 <td style="border:1px solid #ddd;padding:5px 8px;text-align:center;"><select data-examno-sex="${examNo}" style="width:100%;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;text-align:center;"><option value="M"${sex==='M'?' selected':''}>M</option><option value="F"${sex==='F'?' selected':''}>F</option></select></td>
-                <td style="border:1px solid #ddd;padding:4px;"><input type="text" data-examno="${examNo}" value="${name.replace(/"/g, '&quot;')}" oninput="if(this.value.length>35){alert('Name must not exceed 35 characters.');this.value=this.dataset.prev||'';}else{this.dataset.prev=this.value;}" style="width:100%;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;" /></td>
+ <td style="border:1px solid #ddd;padding:4px;"><input type="text" data-examno="${examNo}" value="${name.replace(/"/g, '&quot;')}" oninput="if(this.value.length>35){this.value=this.dataset.prev||'';}else{this.dataset.prev=this.value;}" style="width:100%;padding:4px 6px;border:1px solid #ccc;border-radius:4px;font-size:inherit;box-sizing:border-box;" /></td>
             </tr>`;
         });
 
@@ -9287,13 +9308,13 @@ async function saveEditedNames() {
     const form = document.getElementById('editNamesClassSelect').value;
     const token = getDecryptedToken();
 
-    if (!token) { alert('Authorization Code required.'); return; }
-    if (!form) { alert('Please select a class.'); return; }
+ if (!token) { return; }
+ if (!form) { return; }
 
     const inputs = document.querySelectorAll('#editNamesContainer input[data-examno]');
     const sexSelects = document.querySelectorAll('#editNamesContainer select[data-examno-sex]');
     const examNoInputs = document.querySelectorAll('#editNamesContainer input[data-edit-examno]');
-    if (inputs.length === 0) { alert('No students to update.'); return; }
+ if (inputs.length === 0) { return; }
 
     showLoading();
     updateLoadingPercent(10);
@@ -9313,7 +9334,7 @@ async function saveEditedNames() {
         });
         if (longNameFound) {
             hideLoading();
-            alert('Name must not exceed 35 characters.');
+
             return;
         }
 
@@ -9352,7 +9373,7 @@ async function saveEditedNames() {
 
         if (changesCount === 0 && sexChangesCount === 0 && examNoChangesCount === 0) {
             hideLoading();
-            alert('No name, sex or exam number changes detected.');
+
             return;
         }
 
@@ -9384,7 +9405,7 @@ async function saveEditedNames() {
     } catch (error) {
         hideLoading();
         console.error('Save edited names failed:', error);
-        alert(`Failed to save name changes: ${safeMsg(error)}`);
+
     }
 }
 </script>
